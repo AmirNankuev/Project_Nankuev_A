@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+
+{% block title %}Главная — интернет-магазин одежды{% endblock %}
+
+{% block content %}
+
+<header class="header">
+    <div class="header-left">
+        <button class="menu-btn" type="button" aria-label="Открыть меню">☰</button>
+
+        <nav class="nav" aria-label="Главное меню">
+            <a href="{% url 'home' %}">Главная</a>
+            <a href="{% url 'catalog:product_list' %}">Каталог</a>
+            <a href="{% url 'catalog:product_list' %}?sort=newest">Новинки</a>
+        </nav>
+    </div>
+
+    <a href="{% url 'home' %}" class="logo-mark" aria-label="На главную">◆</a>
+
+    <div class="header-actions">
+        <button type="button" aria-label="Обновить">↻</button>
+
+        <a href="#" class="cart-btn">Корзина</a>
+
+        <button type="button" aria-label="Избранное">♡</button>
+
+        {% if user.is_authenticated %}
+            <span class="user-name">{{ user.username }}</span>
+
+            <form method="post" action="{% url 'users:logout' %}" class="logout-form">
+                {% csrf_token %}
+                <button type="submit" class="auth-btn">Выйти</button>
+            </form>
+        {% else %}
+            <a href="{% url 'users:login' %}" class="auth-btn">Войти</a>
+            <a href="{% url 'users:register' %}" class="auth-btn">Регистрация</a>
+        {% endif %}
+    </div>
+</header>
+
+<main>
+
+    <section class="hero">
+        <div class="side-panel">
+            <div class="categories">
+                <a href="{% url 'catalog:product_list' %}">МУЖЧИНЫ</a>
+                <a href="{% url 'catalog:product_list' %}">ЖЕНЩИНЫ</a>
+                <a href="{% url 'catalog:product_list' %}">ДЕТИ</a>
+            </div>
+
+            <form method="get" class="search-form">
+                <span>⌕</span>
+                <input
+                    type="text"
+                    name="search"
+                    placeholder="Поиск"
+                    value="{{ search_query }}"
+                >
+            </form>
+        </div>
+
+        <div class="hero-content">
+            <div class="hero-text">
+                <h1>НОВАЯ<br>КОЛЛЕКЦИЯ</h1>
+                <p>Лето<br>2024</p>
+
+                <a href="{% url 'catalog:product_list' %}" class="shop-btn">
+                    Перейти в каталог <span>→</span>
+                </a>
+            </div>
+
+            {% for product in hero_products %}
+                <a
+                    href="{% url 'catalog:product_detail' product.slug %}"
+                    class="hero-image image-frame"
+                    {% if product.main_images %}
+                        style="--image-url: url('{{ product.main_images.0.image_url }}');"
+                    {% endif %}
+                >
+                    {% if product.main_images %}
+                        <img src="{{ product.main_images.0.image_url }}" alt="{{ product.name }}">
+                    {% else %}
+                        <div class="image-placeholder">Нет изображения</div>
+                    {% endif %}
+                </a>
+            {% empty %}
+                <div class="hero-image image-frame">
+                    <div class="image-placeholder">Добавьте товары в БД</div>
+                </div>
+
+                <div class="hero-image image-frame">
+                    <div class="image-placeholder">Добавьте товары в БД</div>
+                </div>
+            {% endfor %}
+        </div>
+    </section>
+
+    <section class="new-section" id="new">
+        <div class="section-head">
+            <h2>
+                НОВОЕ<br>
+                НА ЭТОЙ НЕДЕЛЕ
+                <span>({{ products_count|default:"0" }})</span>
+            </h2>
+
+            <a href="{% url 'catalog:product_list' %}?sort=newest">Смотреть всё</a>
+        </div>
+
+        <div class="new-grid">
+            {% for product in new_products %}
+                <article class="product-card small-card">
+                    <a
+                        href="{% url 'catalog:product_detail' product.slug %}"
+                        class="product-image image-frame"
+                        {% if product.main_images %}
+                            style="--image-url: url('{{ product.main_images.0.image_url }}');"
+                        {% endif %}
+                    >
+                        {% if product.main_images %}
+                            <img src="{{ product.main_images.0.image_url }}" alt="{{ product.name }}">
+                        {% else %}
+                            <div class="image-placeholder">Нет изображения</div>
+                        {% endif %}
+                    </a>
+
+                    <button class="plus-btn" type="button" aria-label="Добавить товар">+</button>
+
+                    <div class="product-info">
+                        <div>
+                            <p class="product-type">{{ product.category }}</p>
+                            <h3>{{ product.name }}</h3>
+                        </div>
+
+                        <strong>{{ product.price_from_label }}</strong>
+                    </div>
+                </article>
+            {% empty %}
+                <p class="empty">Товары пока не добавлены в базу данных.</p>
+            {% endfor %}
+        </div>
+    </section>
+
+    <section class="collections-section" id="collections">
+        <div class="collections-head">
+            <h2>XIV<br>КОЛЛЕКЦИИ<br>23-24</h2>
+
+            <div class="catalog-controls">
+                <div class="filter-line static-filters">
+                    <a href="{% url 'catalog:product_list' %}">Все</a>
+                    <a href="{% url 'catalog:product_list' %}">Мужчины</a>
+                    <a href="{% url 'catalog:product_list' %}">Женщины</a>
+                    <a href="{% url 'catalog:product_list' %}">Дети</a>
+                    <a href="{% url 'catalog:product_list' %}">Фильтры (+)</a>
+                    <a href="{% url 'catalog:product_list' %}">Сортировка (-)</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="collection-grid">
+            {% for product in collection_products %}
+                <article class="product-card">
+                    <a
+                        href="{% url 'catalog:product_detail' product.slug %}"
+                        class="product-image large image-frame"
+                        {% if product.main_images %}
+                            style="--image-url: url('{{ product.main_images.0.image_url }}');"
+                        {% endif %}
+                    >
+                        {% if product.main_images %}
+                            <img src="{{ product.main_images.0.image_url }}" alt="{{ product.name }}">
+                        {% else %}
+                            <div class="image-placeholder">Нет изображения</div>
+                        {% endif %}
+                    </a>
+
+                    <button class="plus-btn" type="button" aria-label="Добавить товар">+</button>
+
+                    <div class="product-info">
+                        <div>
+                            <p class="product-type">{{ product.category }}</p>
+                            <h3>{{ product.name }}</h3>
+                        </div>
+
+                        <strong>{{ product.price_from_label }}</strong>
+                    </div>
+                </article>
+            {% empty %}
+                <p class="empty">Товары для коллекции пока не добавлены в базу данных.</p>
+            {% endfor %}
+        </div>
+
+        <a href="{% url 'catalog:product_list' %}" class="see-more-link">
+            Ещё <span>⌄</span>
+        </a>
+    </section>
+
+    <section class="about-section">
+        <h2>НАШ ПОДХОД К ДИЗАЙНУ ОДЕЖДЫ</h2>
+
+        <p>
+            Мы объединяем эстетику, качество и внимание к деталям, чтобы создавать одежду,
+            которая остаётся актуальной вне зависимости от трендов. Каждая вещь продумана
+            для комфорта, выразительности и аккуратного внешнего вида.
+        </p>
+
+        <div class="about-gallery">
+            {% for product in gallery_products %}
+                <a
+                    href="{% url 'catalog:product_detail' product.slug %}"
+                    class="about-image image-frame"
+                    {% if product.main_images %}
+                        style="--image-url: url('{{ product.main_images.0.image_url }}');"
+                    {% endif %}
+                >
+                    {% if product.main_images %}
+                        <img src="{{ product.main_images.0.image_url }}" alt="{{ product.name }}">
+                    {% else %}
+                        <div class="image-placeholder">Нет изображения</div>
+                    {% endif %}
+                </a>
+            {% empty %}
+                <p class="empty">Добавьте товары в базу данных, чтобы заполнить галерею.</p>
+            {% endfor %}
+        </div>
+    </section>
+
+</main>
+
+<footer class="footer">
+    <div class="footer-col">
+        <span>ИНФО</span>
+        <a href="#">Цены</a>
+        <a href="#">О нас</a>
+        <a href="#">Контакты</a>
+    </div>
+
+    <div class="footer-logo">
+        <span>VR</span>
+        <strong>XIV<br>QR</strong>
+    </div>
+
+    <div class="footer-col">
+        <span>ЯЗЫКИ</span>
+        <a href="#">RU</a>
+        <a href="#">ENG</a>
+    </div>
+</footer>
+
+{% endblock %}

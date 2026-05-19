@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}Регистрация — интернет-магазин одежды{% endblock %}
+
+{% block content %}
+
+<main class="auth-page">
+    <section class="auth-card">
+        <a href="{% url 'home' %}" class="auth-back">← На главную</a>
+
+        <h1>Регистрация</h1>
+        <p>Создайте аккаунт пользователя.</p>
+
+        <form method="post" class="auth-form">
+            {% csrf_token %}
+
+            {{ form.as_p }}
+
+            <button type="submit">Создать аккаунт</button>
+        </form>
+
+        <p class="auth-bottom">
+            Уже зарегистрированы?
+            <a href="{% url 'users:login' %}">Войти</a>
+        </p>
+    </section>
+</main>
+<script>
+    const phoneInput = document.getElementById("id_phone");
+
+    if (phoneInput) {
+        phoneInput.addEventListener("focus", function () {
+            if (!phoneInput.value) {
+                phoneInput.value = "+7(";
+            }
+        });
+
+        phoneInput.addEventListener("input", function () {
+            let digits = phoneInput.value.replace(/\D/g, "");
+
+            if (digits.startsWith("7")) {
+                digits = digits.slice(1);
+            }
+
+            if (digits.startsWith("8")) {
+                digits = digits.slice(1);
+            }
+
+            digits = digits.slice(0, 10);
+
+            let result = "+7";
+
+            if (digits.length > 0) {
+                result += "(" + digits.slice(0, 3);
+            }
+
+            if (digits.length >= 3) {
+                result += ")";
+            }
+
+            if (digits.length > 3) {
+                result += digits.slice(3, 6);
+            }
+
+            if (digits.length > 6) {
+                result += "-" + digits.slice(6, 8);
+            }
+
+            if (digits.length > 8) {
+                result += "-" + digits.slice(8, 10);
+            }
+
+            phoneInput.value = result;
+        });
+
+        phoneInput.addEventListener("keydown", function (event) {
+            if (
+                phoneInput.selectionStart <= 3 &&
+                (event.key === "Backspace" || event.key === "Delete")
+            ) {
+                event.preventDefault();
+            }
+        });
+    }
+</script>
+{% endblock %}
