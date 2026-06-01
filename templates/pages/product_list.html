@@ -1,0 +1,212 @@
+{% extends 'base.html' %}
+
+{% block title %}Каталог — интернет-магазин одежды{% endblock %}
+
+{% block content %}
+<main class="catalog-page">
+    <aside class="filters-panel" aria-label="Фильтры каталога">
+        <h2>Фильтры</h2>
+
+        <form method="get" class="filters-form">
+            {% if search_query %}<input type="hidden" name="search" value="{{ search_query }}">{% endif %}
+            {% if selected_gender %}<input type="hidden" name="gender" value="{{ selected_gender }}">{% endif %}
+            {% if selected_category %}<input type="hidden" name="category" value="{{ selected_category }}">{% endif %}
+            {% if selected_brand %}<input type="hidden" name="brand" value="{{ selected_brand }}">{% endif %}
+            {% if selected_color %}<input type="hidden" name="color" value="{{ selected_color }}">{% endif %}
+            {% if selected_size %}<input type="hidden" name="size" value="{{ selected_size }}">{% endif %}
+            {% if selected_sort %}<input type="hidden" name="sort" value="{{ selected_sort }}">{% endif %}
+            {% if view_mode %}<input type="hidden" name="view" value="{{ view_mode }}">{% endif %}
+
+            <section class="filter-block size-filter">
+                <h3>Размер</h3>
+                <div class="size-list">
+                    {% for option in size_options %}
+                        <a class="size-chip {% if option.is_active %}active{% endif %}" href="{{ option.url }}">{{ option.value }}</a>
+                    {% empty %}
+                        <span class="filter-muted">Размеры пока не добавлены</span>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <section class="filter-block availability-filter">
+                <h3>Наличие <span>⌃</span></h3>
+                <label>
+                    <input type="radio" name="availability" value="in_stock" {% if selected_availability == 'in_stock' %}checked{% endif %} onchange="this.form.submit()">
+                    <span></span>
+                    В наличии <b>({{ available_count }})</b>
+                </label>
+                <label>
+                    <input type="radio" name="availability" value="out_of_stock" {% if selected_availability == 'out_of_stock' %}checked{% endif %} onchange="this.form.submit()">
+                    <span></span>
+                    Нет в наличии <b>({{ out_of_stock_count }})</b>
+                </label>
+                {% if selected_availability %}
+                    <a class="clear-filter-link" href="{{ clear_availability_url }}">Снять фильтр наличия</a>
+                {% endif %}
+            </section>
+
+            <details class="filter-details" {% if selected_category %}open{% endif %}>
+                <summary>Категория</summary>
+                <div class="filter-options">
+                    <a href="{{ all_url }}" class="filter-option {% if not selected_category %}active{% endif %}">Все категории</a>
+                    {% for option in category_options %}
+                        <a href="{{ option.url }}" class="filter-option {% if option.is_active %}active{% endif %}" style="padding-left: {{ option.padding }}px;">
+                            {% if option.level %}↳ {% endif %}{{ option.object.name }}
+                        </a>
+                    {% empty %}
+                        <span class="filter-muted">Категории пока не добавлены</span>
+                    {% endfor %}
+                </div>
+            </details>
+
+            <details class="filter-details" {% if selected_color %}open{% endif %}>
+                <summary>Цвета</summary>
+                <div class="filter-options color-options">
+                    {% for option in color_options %}
+                        <a href="{{ option.url }}" class="filter-option {% if option.is_active %}active{% endif %}">
+                            <span class="color-dot" style="background-color: {{ option.object.hex_code }}"></span>{{ option.object.name }}
+                        </a>
+                    {% empty %}
+                        <span class="filter-muted">Цвета пока не добавлены</span>
+                    {% endfor %}
+                </div>
+            </details>
+
+            <details class="filter-details" {% if min_price or max_price %}open{% endif %}>
+                <summary>Цена</summary>
+                <div class="price-fields">
+                    <input type="number" name="min_price" min="0" placeholder="от" value="{{ min_price }}">
+                    <input type="number" name="max_price" min="0" placeholder="до" value="{{ max_price }}">
+                    <button type="submit">ОК</button>
+                </div>
+            </details>
+
+            <details class="filter-details" {% if selected_brand %}open{% endif %}>
+                <summary>Бренды</summary>
+                <div class="filter-options">
+                    {% for option in brand_options %}
+                        <a href="{{ option.url }}" class="filter-option {% if option.is_active %}active{% endif %}">{{ option.object.name }}</a>
+                    {% empty %}
+                        <span class="filter-muted">Бренды пока не добавлены</span>
+                    {% endfor %}
+                </div>
+            </details>
+
+            <div class="filter-actions">
+                <button type="submit">Применить</button>
+                <a href="{% url 'catalog:product_list' %}">Сбросить</a>
+            </div>
+        </form>
+    </aside>
+
+    <section class="catalog-content" id="collections">
+        <div class="catalog-topline">
+            <div>
+                <p class="breadcrumbs"><a href="{% url 'home' %}">Главная</a> / <span>Товары</span></p>
+                <h1>{% if selected_category_object %}{{ selected_category_object.name }}{% elif selected_gender == 'male' %}Мужское{% elif selected_gender == 'female' %}Женское{% elif selected_gender == 'unisex' %}Унисекс{% else %}Товары{% endif %}</h1>
+                <p class="catalog-found">Найдено товаров: {{ total_found }}</p>
+            </div>
+        </div>
+
+        <div class="catalog-toolbar" aria-label="Управление каталогом">
+            <form method="get" class="catalog-sort-form">
+                {% if search_query %}<input type="hidden" name="search" value="{{ search_query }}">{% endif %}
+                {% if selected_gender %}<input type="hidden" name="gender" value="{{ selected_gender }}">{% endif %}
+                {% if selected_category %}<input type="hidden" name="category" value="{{ selected_category }}">{% endif %}
+                {% if selected_size %}<input type="hidden" name="size" value="{{ selected_size }}">{% endif %}
+                {% if selected_color %}<input type="hidden" name="color" value="{{ selected_color }}">{% endif %}
+                {% if selected_brand %}<input type="hidden" name="brand" value="{{ selected_brand }}">{% endif %}
+                {% if selected_availability %}<input type="hidden" name="availability" value="{{ selected_availability }}">{% endif %}
+                {% if min_price %}<input type="hidden" name="min_price" value="{{ min_price }}">{% endif %}
+                {% if max_price %}<input type="hidden" name="max_price" value="{{ max_price }}">{% endif %}
+                {% if view_mode %}<input type="hidden" name="view" value="{{ view_mode }}">{% endif %}
+                <label for="catalog-sort">Сортировка</label>
+                <select id="catalog-sort" name="sort" onchange="this.form.submit()">
+                    {% for option in sort_options %}
+                        <option value="{{ option.value }}" {% if option.is_active %}selected{% endif %}>{{ option.label }}</option>
+                    {% endfor %}
+                </select>
+            </form>
+
+            <div class="catalog-view-switch" aria-label="Вид каталога">
+                <a href="{{ grid_view_url }}" class="{% if view_mode == 'grid' %}active{% endif %}">Плитка</a>
+                <a href="{{ list_view_url }}" class="{% if view_mode == 'list' %}active{% endif %}">Список</a>
+            </div>
+        </div>
+
+        <div class="category-chip-grid" aria-label="Быстрые категории">
+            <a class="category-tile {% if not selected_category %}active{% endif %}" href="{{ all_url }}">Все</a>
+            {% for option in category_options|slice:":8" %}
+                <a class="category-tile {% if option.is_active %}active{% endif %}" href="{{ option.url }}">{{ option.object.name }}</a>
+            {% endfor %}
+        </div>
+
+        <div class="catalog-grid catalog-grid--{{ view_mode }}">
+            {% for product in products %}
+                <article class="catalog-product-card">
+                    <a href="{% url 'catalog:product_detail' product.slug %}" class="catalog-product-image image-frame" {% if product.main_images %}style="--image-url: url('{{ product.main_images.0.image_url }}');"{% endif %}>
+                        {% if product.main_images %}
+                            <img src="{{ product.main_images.0.image_url }}" alt="{{ product.name }}">
+                        {% else %}
+                            <div class="image-placeholder">Нет изображения</div>
+                        {% endif %}
+                    </a>
+
+                    <form method="post" action="{% url 'cart_add_product' product.id %}" class="catalog-quick-cart-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                        <button type="submit" aria-label="Добавить товар в корзину">+</button>
+                    </form>
+
+                    <div class="catalog-card-info">
+                        <div class="catalog-card-meta">
+                            <p>
+                                {{ product.category.name }}
+                                {% if product.prepared_variants %}
+                                    <span class="color-preview" style="background-color: {{ product.prepared_variants.0.color.hex_code }}"></span>
+                                    <small>+{{ product.prepared_variants|length }}</small>
+                                {% endif %}
+                            </p>
+                            <p class="catalog-card-brand">{{ product.brand.name }}</p>
+                        </div>
+
+                        <div class="catalog-card-bottom">
+                            <h3><a href="{% url 'catalog:product_detail' product.slug %}">{{ product.name }}</a></h3>
+                            <strong>{% if product.card_price_label %}{{ product.card_price_label }}{% else %}{{ product.price_from_label }}{% endif %}</strong>
+                        </div>
+
+                        <p class="catalog-list-description">
+                            {% if product.description %}{{ product.description|truncatechars:180 }}{% else %}Описание товара пока не добавлено.{% endif %}
+                        </p>
+
+                        <div class="catalog-list-extra">
+                            {% if product.card_in_stock %}
+                                <span class="stock-badge stock-badge--yes">В наличии</span>
+                            {% else %}
+                                <span class="stock-badge stock-badge--no">Нет в наличии</span>
+                            {% endif %}
+                            <a href="{% url 'catalog:product_detail' product.slug %}">Открыть карточку</a>
+                        </div>
+                    </div>
+                </article>
+            {% empty %}
+                <p class="empty catalog-empty">По выбранным параметрам товары не найдены.</p>
+            {% endfor %}
+        </div>
+
+        {% if page_obj.has_other_pages %}
+            <nav class="pagination catalog-pagination" aria-label="Пагинация">
+                {% if page_obj.has_previous %}
+                    <a href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page_obj.previous_page_number }}">← Назад</a>
+                {% endif %}
+
+                <span>Страница {{ page_obj.number }} из {{ page_obj.paginator.num_pages }}</span>
+
+                {% if page_obj.has_next %}
+                    <a href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page_obj.next_page_number }}">Дальше ↓</a>
+                {% endif %}
+            </nav>
+        {% endif %}
+    </section>
+</main>
+{% endblock %}

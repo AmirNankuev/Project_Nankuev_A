@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Новая коллекция</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+
+<body>
+  <main class="page">
+    <header class="header">
+      <div class="header-left">
+        <button class="burger" type="button" aria-label="Открыть меню">
+          <span></span>
+          <span></span>
+        </button>
+
+        <nav class="top-menu" aria-label="Главное меню">
+          <a href="#">ГЛАВНАЯ</a>
+          <a href="#">КОЛЛЕКЦИИ</a>
+          <a href="#">НОВИНКИ</a>
+        </nav>
+      </div>
+
+      <a class="logo" href="#" aria-label="На главную">
+        <span></span>
+      </a>
+
+      <div class="header-right">
+        <button class="icon-button" type="button" aria-label="Просмотр">
+          <svg viewBox="0 0 24 24">
+            <path d="M2.5 12s3.5-5 9.5-5 9.5 5 9.5 5-3.5 5-9.5 5-9.5-5-9.5-5Z" />
+            <circle cx="12" cy="12" r="2.2" />
+          </svg>
+        </button>
+
+        <div class="cart">
+          <button class="cart-text" type="button">КОРЗИНА</button>
+
+          <button class="cart-icon" type="button" aria-label="Корзина">
+            <svg viewBox="0 0 24 24">
+              <path d="M7 8h10l-.8 10a2 2 0 0 1-2 1.8H9.8A2 2 0 0 1 7.8 18L7 8Z" />
+              <path d="M9 8a3 3 0 0 1 6 0" />
+            </svg>
+          </button>
+        </div>
+
+        <button class="icon-button" type="button" aria-label="Профиль">
+          <svg viewBox="0 0 24 24">
+            <circle cx="12" cy="8.5" r="3.3" />
+            <path d="M5.5 20a6.8 6.8 0 0 1 13 0" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <section class="hero">
+      <aside class="hero-info">
+        <nav class="category-menu" aria-label="Категории">
+          <a href="#">МУЖСКОЕ</a>
+          <a href="#">ЖЕНСКОЕ</a>
+          <a href="#">ДЕТЯМ</a>
+        </nav>
+
+        <form class="search">
+          <button type="submit" aria-label="Искать">
+            <svg viewBox="0 0 24 24">
+              <circle cx="10.5" cy="10.5" r="5.8" />
+              <path d="M15 15l4.5 4.5" />
+            </svg>
+          </button>
+
+          <input type="search" placeholder="ПОИСК" />
+        </form>
+
+        <div class="hero-title">
+          <h1>НОВАЯ<br>КОЛЛЕКЦИЯ</h1>
+          <p>ЛЕТО<br>2026</p>
+        </div>
+
+        <div class="hero-bottom">
+          <a class="shop-link" href="#">
+            <span>В МАГАЗИН</span>
+
+            <svg viewBox="0 0 46 10">
+              <path d="M1 5h42" />
+              <path d="M39 1l5 4-5 4" />
+            </svg>
+          </a>
+
+          <div class="slider-buttons">
+            <button type="button" aria-label="Предыдущий слайд">
+              <svg viewBox="0 0 8 12">
+                <path d="M6.5 1 1.5 6l5 5" />
+              </svg>
+            </button>
+
+            <button type="button" aria-label="Следующий слайд">
+              <svg viewBox="0 0 8 12">
+                <path d="M1.5 1 6.5 6l-5 5" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      <div class="hero-products">
+        <article class="hero-card">
+          <img src="./img/white-look.jpg" alt="Белый летний образ">
+        </article>
+
+        <article class="hero-card">
+          <img src="./img/black-tshirt.jpg" alt="Черная футболка с принтом">
+        </article>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

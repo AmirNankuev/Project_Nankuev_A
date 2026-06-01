@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}Вход — интернет-магазин одежды{% endblock %}
+
+{% block content %}
+
+<main class="auth-page">
+    <section class="auth-card">
+        <a href="{% url 'home' %}" class="auth-back">← На главную</a>
+
+        <h1>Вход</h1>
+        <p>Войдите в аккаунт пользователя.</p>
+
+        <form method="post" class="auth-form">
+            {% csrf_token %}
+
+            {{ form.as_p }}
+
+            <button type="submit">Войти</button>
+        </form>
+
+        <p class="auth-bottom">
+            Ещё не зарегистрированы?
+            <a href="{% url 'users:register' %}">Регистрация</a>
+        </p>
+    </section>
+</main>
+
+{% endblock %}

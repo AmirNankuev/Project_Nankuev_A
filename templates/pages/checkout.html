@@ -1,0 +1,108 @@
+{% extends 'base.html' %}
+
+{% block title %}Оформление заказа — интернет-магазин одежды{% endblock %}
+
+{% block header %}{% endblock %}
+
+{% block content %}
+<main class="checkout-page">
+    <a href="{% url 'cart' %}" class="checkout-back" aria-label="Вернуться в корзину">←</a>
+
+    <section class="checkout-form-zone" aria-label="Оформление заказа">
+        <h1>Оформление заказа</h1>
+
+        <div class="checkout-steps" aria-label="Этапы оформления заказа">
+            <strong>Данные</strong>
+            <span>Доставка</span>
+            <span>Оплата</span>
+        </div>
+
+        {% if order_submitted and created_order %}
+            <div class="checkout-success">
+                Заказ №{{ created_order.order_number }} создан. Он уже доступен в админке в разделе «Main → Заказы».
+            </div>
+        {% endif %}
+
+        <form method="post" class="checkout-form">
+            {% csrf_token %}
+
+            <h2>Контактные данные</h2>
+            <input type="email" name="email" placeholder="Эл. почта" required>
+            <input type="tel" name="phone" placeholder="Телефон" required>
+
+            <h2>Адрес доставки</h2>
+            <div class="checkout-two-cols">
+                <input type="text" name="first_name" placeholder="Имя" required>
+                <input type="text" name="last_name" placeholder="Фамилия" required>
+            </div>
+
+            <select name="country" required>
+                <option value="">Страна</option>
+                <option value="RU">Россия</option>
+                <option value="KZ">Казахстан</option>
+                <option value="BY">Беларусь</option>
+            </select>
+
+            <input type="text" name="region" placeholder="Регион" required>
+            <input type="text" name="address" placeholder="Адрес" required>
+
+            <div class="checkout-two-cols">
+                <input type="text" name="city" placeholder="Город" required>
+                <input type="text" name="postal_code" placeholder="Индекс" required>
+            </div>
+
+            <input type="hidden" name="delivery_type" value="courier">
+            <input type="hidden" name="payment_method" value="card_online">
+
+            <button type="submit">Оформить заказ <span>→</span></button>
+        </form>
+    </section>
+
+    <aside class="checkout-order" aria-label="Ваш заказ">
+        <span class="checkout-count">({{ cart_count }})</span>
+        <h2>Ваш заказ</h2>
+
+        {% if cart_items %}
+            <div class="checkout-order-list">
+                {% for item in cart_items %}
+                    <article class="checkout-order-item">
+                        <a href="{% url 'catalog:product_detail' item.product.slug %}" class="checkout-order-image">
+                            {% if item.image_url %}
+                                <img src="{{ item.image_url }}" alt="{{ item.product.name }}">
+                            {% else %}
+                                <div class="image-placeholder">Нет изображения</div>
+                            {% endif %}
+                        </a>
+
+                        <div>
+                            <h3>{{ item.product.name }}</h3>
+                            <p>{{ item.variant.color.name }}/{{ item.variant.size }}</p>
+                            <small>({{ item.quantity }})</small>
+                        </div>
+
+                        <a href="{% url 'cart' %}" class="checkout-change">Изменить</a>
+                        <strong>{{ item.line_total_label }}</strong>
+                    </article>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p class="checkout-empty">Корзина пуста.</p>
+        {% endif %}
+
+        <dl class="checkout-totals">
+            <div>
+                <dt>Товары</dt>
+                <dd>{{ cart_subtotal_label }}</dd>
+            </div>
+            <div>
+                <dt>Доставка</dt>
+                <dd>Рассчитывается на следующем шаге</dd>
+            </div>
+            <div>
+                <dt>Итого</dt>
+                <dd>{{ cart_total_label }}</dd>
+            </div>
+        </dl>
+    </aside>
+</main>
+{% endblock %}

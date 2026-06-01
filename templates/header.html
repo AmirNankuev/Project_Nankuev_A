@@ -1,0 +1,175 @@
+<header class="header">
+    <div class="header-left">
+        <button class="menu-btn" type="button" data-burger-open aria-label="Открыть меню">☰</button>
+
+        <nav class="nav" aria-label="Главное меню">
+            <a href="{% url 'home' %}">Главная</a>
+            <a href="{% url 'catalog:product_list' %}">Каталог</a>
+            <a href="{% url 'catalog:product_list' %}?sort=newest">Новинки</a>
+        </nav>
+    </div>
+
+    <a href="{% url 'home' %}" class="logo-mark" aria-label="На главную">◆</a>
+
+    <div class="header-actions">
+        <button class="header-search-btn" type="button" data-search-open aria-label="Открыть поиск">⌕</button>
+
+        <a href="{% url 'cart' %}" class="cart-btn">Корзина{% if header_cart_count %} ({{ header_cart_count }}){% endif %}</a>
+
+        {% if user.is_authenticated %}
+            <a href="{% url 'users:profile' %}" class="user-name">{{ user.username }}</a>
+
+            <form method="post" action="{% url 'users:logout' %}" class="logout-form">
+                {% csrf_token %}
+                <button type="submit" class="auth-btn">Выйти</button>
+            </form>
+        {% else %}
+            <a href="{% url 'users:login' %}" class="auth-btn">Войти</a>
+        {% endif %}
+    </div>
+</header>
+
+<div class="burger-backdrop" data-burger-close hidden></div>
+<aside class="burger-menu" data-burger-menu hidden aria-label="Разделы каталога">
+    <button class="burger-close" type="button" data-burger-close aria-label="Закрыть меню">×</button>
+    <p>Разделы</p>
+
+    <nav class="burger-links">
+        {% for category in header_root_categories %}
+            <details class="burger-category">
+                <summary>
+                    <span>{{ category.name }}</span>
+                    <a
+                        class="burger-open-category"
+                        href="{% url 'catalog:product_list' %}?category={{ category.id }}"
+                        aria-label="Открыть каталог {{ category.name }}"
+                    >→</a>
+                </summary>
+
+                <div class="burger-child-links">
+                    <a href="{% url 'catalog:product_list' %}?category={{ category.id }}">Все товары раздела</a>
+                    {% for child in category.children.all %}
+                        <a href="{% url 'catalog:product_list' %}?category={{ child.id }}">{{ child.name }}</a>
+                    {% empty %}
+                        <span>Подкатегории пока не добавлены</span>
+                    {% endfor %}
+                </div>
+            </details>
+        {% empty %}
+            <span class="burger-empty">Категории пока не добавлены</span>
+        {% endfor %}
+    </nav>
+</aside>
+
+<div class="search-overlay" data-search-overlay hidden>
+    <button class="search-close" type="button" data-search-close aria-label="Закрыть поиск">×</button>
+
+    <form method="get" action="{% url 'catalog:product_list' %}" class="search-modal-form">
+        <label for="global-search-input">Поиск по каталогу</label>
+        <div>
+            <input
+                id="global-search-input"
+                type="text"
+                name="search"
+                placeholder="Введите название товара"
+                value="{{ request.GET.search }}"
+            >
+            <button type="submit">Найти</button>
+        </div>
+    </form>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const burgerMenu = document.querySelector('[data-burger-menu]');
+        const burgerBackdrop = document.querySelector('[data-burger-close].burger-backdrop');
+        const burgerOpen = document.querySelector('[data-burger-open]');
+        const burgerCloseButtons = document.querySelectorAll('[data-burger-close]');
+        const burgerOpenCategoryLinks = document.querySelectorAll('.burger-open-category');
+        const searchOverlay = document.querySelector('[data-search-overlay]');
+        const searchOpen = document.querySelector('[data-search-open]');
+        const searchClose = document.querySelector('[data-search-close]');
+        const searchInput = document.getElementById('global-search-input');
+
+        function openBurger() {
+            if (!burgerMenu || !burgerBackdrop) {
+                return;
+            }
+
+            burgerMenu.hidden = false;
+            burgerBackdrop.hidden = false;
+            document.body.classList.add('burger-open');
+        }
+
+        function closeBurger() {
+            if (!burgerMenu || !burgerBackdrop) {
+                return;
+            }
+
+            burgerMenu.hidden = true;
+            burgerBackdrop.hidden = true;
+            document.body.classList.remove('burger-open');
+        }
+
+        function openSearch() {
+            if (!searchOverlay) {
+                return;
+            }
+
+            searchOverlay.hidden = false;
+            document.body.classList.add('search-open');
+
+            window.setTimeout(function () {
+                if (searchInput) {
+                    searchInput.focus();
+                }
+            }, 80);
+        }
+
+        function closeSearch() {
+            if (!searchOverlay) {
+                return;
+            }
+
+            searchOverlay.hidden = true;
+            document.body.classList.remove('search-open');
+        }
+
+        if (burgerOpen) {
+            burgerOpen.addEventListener('click', openBurger);
+        }
+
+        burgerCloseButtons.forEach(function (button) {
+            button.addEventListener('click', closeBurger);
+        });
+
+        burgerOpenCategoryLinks.forEach(function (link) {
+            link.addEventListener('click', function (event) {
+                event.stopPropagation();
+            });
+        });
+
+        if (searchOpen) {
+            searchOpen.addEventListener('click', openSearch);
+        }
+
+        if (searchClose) {
+            searchClose.addEventListener('click', closeSearch);
+        }
+
+        if (searchOverlay) {
+            searchOverlay.addEventListener('click', function (event) {
+                if (event.target === searchOverlay) {
+                    closeSearch();
+                }
+            });
+        }
+
+        document.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') {
+                closeBurger();
+                closeSearch();
+            }
+        });
+    });
+</script>

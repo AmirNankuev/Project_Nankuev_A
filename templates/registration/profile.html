@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+
+{% block title %}Личный кабинет — интернет-магазин одежды{% endblock %}
+
+{% block content %}
+<main class="profile-page">
+    <section class="profile-hero">
+        <div>
+            <p class="profile-kicker">Личный кабинет</p>
+            <h1>{{ user.full_name|default:user.username }}</h1>
+            <p>Здесь можно изменить контактные данные и посмотреть историю заказов.</p>
+        </div>
+
+        <div class="profile-status-card">
+            <span>Статус аккаунта</span>
+            <strong>{{ profile.get_account_status_display }}</strong>
+            <small>Дата регистрации: {{ profile.registration_date|date:"d.m.Y" }}</small>
+        </div>
+    </section>
+
+    {% if messages %}
+        <div class="profile-messages">
+            {% for message in messages %}
+                <p class="profile-message profile-message--{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    <section class="profile-layout">
+        <aside class="profile-sidebar">
+            <a href="#profile-data">Мои данные</a>
+            <a href="#profile-orders">Мои заказы</a>
+            <a href="{% url 'cart' %}">Корзина</a>
+            <form method="post" action="{% url 'users:logout' %}">
+                {% csrf_token %}
+                <button type="submit">Выйти</button>
+            </form>
+        </aside>
+
+        <div class="profile-main">
+            <section class="profile-card" id="profile-data">
+                <div class="profile-section-head">
+                    <div>
+                        <p>Аккаунт</p>
+                        <h2>Мои данные</h2>
+                    </div>
+                    <span>{{ user.username }}</span>
+                </div>
+
+                <form method="post" class="profile-form">
+                    {% csrf_token %}
+
+                    {% for field in form %}
+                        <label>
+                            <span>{{ field.label }}</span>
+                            {{ field }}
+                            {% if field.errors %}
+                                <small>{{ field.errors|striptags }}</small>
+                            {% endif %}
+                        </label>
+                    {% endfor %}
+
+                    <button type="submit">Сохранить изменения</button>
+                </form>
+            </section>
+
+            <section class="profile-card" id="profile-orders">
+                <div class="profile-section-head">
+                    <div>
+                        <p>История</p>
+                        <h2>Мои заказы</h2>
+                    </div>
+                    <span>{{ orders|length }}</span>
+                </div>
+
+                <div class="profile-orders">
+                    {% for order in orders %}
+                        <article class="profile-order-card">
+                            <div class="profile-order-top">
+                                <div>
+                                    <h3>{{ order.order_number }}</h3>
+                                    <p>{{ order.created_at|date:"d.m.Y H:i" }}</p>
+                                </div>
+                                <div>
+                                    <strong>{{ order.total_amount }} ₽</strong>
+                                    <span>{{ order.get_status_display }}</span>
+                                </div>
+                            </div>
+
+                            <div class="profile-order-meta">
+                                <span>Оплата: {{ order.get_payment_status_display }}</span>
+                                <span>Доставка: {{ order.get_delivery_type_display }}</span>
+                            </div>
+
+                            <div class="profile-order-items">
+                                {% for item in order.items.all %}
+                                    <div class="profile-order-item">
+                                        {% with product=item.product_variant.product %}
+                                            {% if product.profile_main_images %}
+                                                <img src="{{ product.profile_main_images.0.image_url }}" alt="{{ product.name }}">
+                                            {% else %}
+                                                <div class="profile-order-item-empty">Нет фото</div>
+                                            {% endif %}
+
+                                            <div>
+                                                <strong>{{ product.name }}</strong>
+                                                <span>{{ item.product_variant.color.name }} / {{ item.product_variant.size }}</span>
+                                                <small>{{ item.quantity }} × {{ item.unit_price }} ₽</small>
+                                            </div>
+                                        {% endwith %}
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        </article>
+                    {% empty %}
+                        <div class="profile-empty-orders">
+                            <h3>Заказов пока нет</h3>
+                            <p>После оформления покупки заказ появится здесь и в разделе Main → Заказы в админке.</p>
+                            <a href="{% url 'catalog:product_list' %}">Перейти в каталог</a>
+                        </div>
+                    {% endfor %}
+                </div>
+            </section>
+        </div>
+    </section>
+</main>
+
+<script>
+    const profilePhoneInput = document.getElementById("id_phone");
+
+    if (profilePhoneInput) {
+        profilePhoneInput.addEventListener("focus", function () {
+            if (!profilePhoneInput.value) {
+                profilePhoneInput.value = "+7(";
+            }
+        });
+
+        profilePhoneInput.addEventListener("input", function () {
+            let digits = profilePhoneInput.value.replace(/\D/g, "");
+
+            if (digits.startsWith("7")) {
+                digits = digits.slice(1);
+            }
+
+            if (digits.startsWith("8")) {
+                digits = digits.slice(1);
+            }
+
+            digits = digits.slice(0, 10);
+
+            let result = "+7";
+
+            if (digits.length > 0) {
+                result += "(" + digits.slice(0, 3);
+            }
+
+            if (digits.length >= 3) {
+                result += ")";
+            }
+
+            if (digits.length > 3) {
+                result += digits.slice(3, 6);
+            }
+
+            if (digits.length > 6) {
+                result += "-" + digits.slice(6, 8);
+            }
+
+            if (digits.length > 8) {
+                result += "-" + digits.slice(8, 10);
+            }
+
+            profilePhoneInput.value = result;
+        });
+
+        profilePhoneInput.addEventListener("keydown", function (event) {
+            if (
+                profilePhoneInput.selectionStart <= 3 &&
+                (event.key === "Backspace" || event.key === "Delete")
+            ) {
+                event.preventDefault();
+            }
+        });
+    }
+</script>
+{% endblock %}

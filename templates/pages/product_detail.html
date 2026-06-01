@@ -1,0 +1,160 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ product.name }} — карточка товара{% endblock %}
+
+{% block content %}
+<main class="product-detail-page">
+    <section class="product-detail-layout" aria-label="Карточка товара">
+        <div class="product-gallery-zone">
+            {% if product.gallery %}
+                <div
+                    class="detail-image-frame"
+                    style="--detail-image-url: url('{{ product.gallery.0.image_url }}');"
+                >
+                    <img
+                        id="detail-main-image"
+                        src="{{ product.gallery.0.image_url }}"
+                        alt="{{ product.name }}"
+                    >
+                </div>
+
+                <div class="detail-thumb-list" aria-label="Фотографии товара">
+                    {% for image in product.gallery %}
+                        <button
+                            class="detail-thumb {% if forloop.first %}active{% endif %}"
+                            type="button"
+                            data-image="{{ image.image_url }}"
+                            aria-label="Показать фото {{ forloop.counter }}"
+                        >
+                            <img src="{{ image.image_url }}" alt="{{ product.name }} — фото {{ forloop.counter }}">
+                        </button>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="detail-image-frame detail-empty-image">
+                    <div class="image-placeholder">Нет изображения</div>
+                </div>
+            {% endif %}
+        </div>
+
+        <aside class="product-info-panel">
+            <button class="detail-favorite" type="button" aria-label="Добавить в избранное">♡</button>
+
+            <p class="detail-category">{{ product.category }}</p>
+            <h1>{{ product.name }}</h1>
+
+            <strong class="selected-variant-price" id="selected-variant-price">
+                {{ selected_price_label }}
+            </strong>
+            <p class="tax-note">Все налоги включены</p>
+
+            <p class="detail-copy">
+                {% if product.description %}
+                    {{ product.description }}
+                {% else %}
+                    Описание товара пока не добавлено.
+                {% endif %}
+            </p>
+
+            <div class="detail-option-block">
+                <p class="detail-option-label">Цвет</p>
+                <div class="detail-color-row" aria-label="Доступные цвета">
+                    {% for color in color_options %}
+                        <span
+                            class="detail-color-chip"
+                            style="background-color: {{ color.hex_code }}"
+                            title="{{ color.name }}"
+                            aria-label="{{ color.name }}"
+                        ></span>
+                    {% empty %}
+                        <span class="detail-muted">Цвета пока не добавлены</span>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="detail-option-block">
+                <p class="detail-option-label">Размер</p>
+                <div class="detail-size-row" aria-label="Доступные размеры и цены">
+                    {% for variant in variant_options %}
+                        <button
+                            class="detail-size-chip {% if variant.is_selected %}active{% endif %} {% if variant.quantity == 0 %}disabled{% endif %}"
+                            type="button"
+                            data-price="{{ variant.price_label }}"
+                            data-color="{{ variant.color_name }}"
+                            data-cart-url="{% url 'cart_add' variant.id %}"
+                            {% if variant.quantity == 0 %}aria-disabled="true"{% endif %}
+                            title="{{ variant.color_name }} — {{ variant.price_label }}"
+                        >
+                            <span>{{ variant.size }}</span>
+                            <small>{{ variant.price_label }}</small>
+                        </button>
+                    {% empty %}
+                        <span class="detail-muted">Размеры пока не добавлены</span>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="detail-guide-links">
+                <a href="#">Найдите свой размер</a>
+                <span>|</span>
+                <a href="#">Таблица размеров</a>
+            </div>
+
+            {% if selected_variant %}
+                <form method="post" action="{% url 'cart_add' selected_variant.id %}" class="detail-cart-form" id="detail-cart-form">
+                    {% csrf_token %}
+                    <button class="detail-add-btn" type="submit">Добавить в корзину</button>
+                </form>
+            {% else %}
+                <button class="detail-add-btn" type="button" disabled>Нет вариантов для покупки</button>
+            {% endif %}
+        </aside>
+    </section>
+</main>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const mainImage = document.getElementById('detail-main-image');
+        const imageFrame = document.querySelector('.detail-image-frame');
+        const thumbs = document.querySelectorAll('.detail-thumb');
+        const price = document.getElementById('selected-variant-price');
+        const sizeButtons = document.querySelectorAll('.detail-size-chip');
+        const cartForm = document.getElementById('detail-cart-form');
+
+        thumbs.forEach(function (thumb) {
+            thumb.addEventListener('click', function () {
+                const imageUrl = thumb.dataset.image;
+
+                if (mainImage && imageUrl) {
+                    mainImage.src = imageUrl;
+                    if (imageFrame) {
+                        imageFrame.style.setProperty('--detail-image-url', `url('${imageUrl}')`);
+                    }
+                }
+
+                thumbs.forEach(function (item) { item.classList.remove('active'); });
+                thumb.classList.add('active');
+            });
+        });
+
+        sizeButtons.forEach(function (button) {
+            button.addEventListener('click', function () {
+                if (button.classList.contains('disabled')) {
+                    return;
+                }
+
+                sizeButtons.forEach(function (item) { item.classList.remove('active'); });
+                button.classList.add('active');
+
+                if (price && button.dataset.price) {
+                    price.textContent = button.dataset.price;
+                }
+
+                if (cartForm && button.dataset.cartUrl) {
+                    cartForm.action = button.dataset.cartUrl;
+                }
+            });
+        });
+    });
+</script>
+{% endblock %}

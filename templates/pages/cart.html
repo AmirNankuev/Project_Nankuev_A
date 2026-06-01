@@ -1,0 +1,100 @@
+{% extends 'base.html' %}
+
+{% block title %}Корзина — интернет-магазин одежды{% endblock %}
+
+{% block content %}
+<main class="cart-page">
+    <section class="cart-items-zone" aria-label="Корзина">
+        <div class="cart-tabs">
+            <strong>Корзина</strong>
+        </div>
+
+        {% if cart_items %}
+            <div class="cart-items-grid">
+                {% for item in cart_items %}
+                    <article class="cart-item-card">
+                        <form method="post" action="{% url 'cart_remove' item.variant.id %}" class="cart-remove-form">
+                            {% csrf_token %}
+                            <button type="submit" aria-label="Удалить товар">×</button>
+                        </form>
+
+                        <a href="{% url 'catalog:product_detail' item.product.slug %}" class="cart-item-image image-frame" {% if item.image_url %}style="--image-url: url('{{ item.image_url }}');"{% endif %}>
+                            {% if item.image_url %}
+                                <img src="{{ item.image_url }}" alt="{{ item.product.name }}">
+                            {% else %}
+                                <div class="image-placeholder">Нет изображения</div>
+                            {% endif %}
+                        </a>
+
+                        <div class="cart-item-meta">
+                            <div>
+                                <p>{{ item.product.category.name }}</p>
+                                <h2><a href="{% url 'catalog:product_detail' item.product.slug %}">{{ item.product.name }}</a></h2>
+                            </div>
+                            <strong>{{ item.price_label }}</strong>
+                        </div>
+
+                        <div class="cart-item-options">
+                            <span class="cart-size">{{ item.variant.size }}</span>
+                            <span class="cart-color" style="background-color: {{ item.variant.color.hex_code }}" title="{{ item.variant.color.name }}"></span>
+
+                            <div class="cart-qty-controls" aria-label="Количество товара">
+                                <form method="post" action="{% url 'cart_update' item.variant.id %}">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="quantity" value="{{ item.increase_quantity }}">
+                                    <button type="submit">+</button>
+                                </form>
+
+                                <span>{{ item.quantity }}</span>
+
+                                <form method="post" action="{% url 'cart_update' item.variant.id %}">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="quantity" value="{{ item.decrease_quantity }}">
+                                    <button type="submit">−</button>
+                                </form>
+                            </div>
+                        </div>
+                    </article>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="cart-empty-state">
+                <h1>Корзина пуста</h1>
+                <p>Добавьте товары из каталога, чтобы оформить заказ.</p>
+                <a href="{% url 'catalog:product_list' %}">Перейти в каталог</a>
+            </div>
+        {% endif %}
+    </section>
+
+    <aside class="order-summary" aria-label="Итог заказа">
+        <h2>Итог заказа</h2>
+
+        <dl>
+            <div>
+                <dt>Товары</dt>
+                <dd>{{ cart_subtotal_label }}</dd>
+            </div>
+            <div>
+                <dt>Доставка</dt>
+                <dd>{% if cart_items %}на следующем шаге{% else %}—{% endif %}</dd>
+            </div>
+        </dl>
+
+        <div class="summary-total">
+            <span>Итого <small>с налогами</small></span>
+            <strong>{{ cart_total_label }}</strong>
+        </div>
+
+        <label class="terms-check">
+            <input type="checkbox" required>
+            <span>Согласен с условиями оформления заказа</span>
+        </label>
+
+        {% if cart_items %}
+            <a href="{% url 'checkout' %}" class="summary-continue">Продолжить</a>
+        {% else %}
+            <a href="{% url 'catalog:product_list' %}" class="summary-continue">В каталог</a>
+        {% endif %}
+    </aside>
+</main>
+{% endblock %}
