@@ -73,6 +73,25 @@ class LoginForm(AuthenticationForm):
         widget=forms.PasswordInput
     )
 
+    error_messages = {
+        **AuthenticationForm.error_messages,
+        "email_not_confirmed": "Аккаунт ещё не активирован. Подтвердите email по ссылке из письма.",
+    }
+
+    def clean(self):
+        username = self.cleaned_data.get("username")
+        password = self.cleaned_data.get("password")
+
+        if username and password:
+            user = CustomUser.objects.filter(username=username).first()
+            if user and not user.is_active and not user.email_confirmed and user.check_password(password):
+                raise ValidationError(
+                    self.error_messages["email_not_confirmed"],
+                    code="email_not_confirmed",
+                )
+
+        return super().clean()
+
 
 class ProfileForm(forms.ModelForm):
     class Meta:

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Подтверждение почты — интернет-магазин одежды{% endblock %}
+
+{% block content %}
+<main class="auth-page">
+    <section class="auth-card auth-card--wide">
+        <a href="{% url 'home' %}" class="auth-back">← На главную</a>
+
+        <h1>Проверьте почту</h1>
+        <p>
+            Аккаунт создан, но для входа нужно подтвердить email.
+            Мы отправили письмо со ссылкой активации на указанную при регистрации почту.
+        </p>
+
+        {% if messages %}
+            <div class="auth-messages">
+                {% for message in messages %}
+                    <p class="auth-message auth-message--{{ message.tags }}">{{ message }}</p>
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        <div class="auth-info-box">
+            <strong>Что делать дальше?</strong>
+            <span>Откройте письмо, нажмите ссылку подтверждения и после этого войдите в личный кабинет.</span>
+            <small>Если письма нет во входящих, проверьте папку «Спам».</small>
+        </div>
+
+        <p class="auth-bottom">
+            Уже подтвердили почту?
+            <a href="{% url 'users:login' %}">Войти</a>
+        </p>
+    </section>
+</main>
+{% endblock %}

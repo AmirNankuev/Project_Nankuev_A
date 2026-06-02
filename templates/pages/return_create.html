@@ -35,6 +35,11 @@
             </div>
         </div>
 
+        <div class="return-deadline-note">
+            Возврат по настройкам магазина доступен {{ return_period_days }} дней.
+            Крайний срок по этому заказу: <strong>{{ return_deadline_label }}</strong>.
+        </div>
+
         <form method="post" enctype="multipart/form-data" class="return-form">
             {% csrf_token %}
 

@@ -49,7 +49,7 @@ INSTALLED_APPS = [
     'image_uploader_widget',
     'main',
     'catalog',
-    "users",
+    "users.apps.UsersConfig",
 ]
 
 MIDDLEWARE = [
@@ -172,4 +172,24 @@ YOOKASSA_RETURN_BASE_URL = os.getenv("YOOKASSA_RETURN_BASE_URL", "http://127.0.0
 YOOKASSA_CURRENCY = os.getenv("YOOKASSA_CURRENCY", "RUB")
 YOOKASSA_CAPTURE = env_bool("YOOKASSA_CAPTURE", True)
 YOOKASSA_REQUEST_TIMEOUT = int(os.getenv("YOOKASSA_REQUEST_TIMEOUT", "20"))
+
+# Email notifications
+# Для реальной отправки задайте EMAIL_HOST_USER и EMAIL_HOST_PASSWORD
+# паролем приложения от Yandex или Google. Если пароль не задан,
+# письма будут выводиться в консоль разработки.
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.yandex.ru")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "465"))
+EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", False)
+EMAIL_USE_SSL = env_bool("EMAIL_USE_SSL", True)
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "amirnankuev@yandex.ru")
+SERVER_EMAIL = DEFAULT_FROM_EMAIL
+SITE_URL = os.getenv("SITE_URL", "http://127.0.0.1:8000")
+EMAIL_NOTIFICATIONS_ENABLED = env_bool("EMAIL_NOTIFICATIONS_ENABLED", True)
+
+if EMAIL_HOST_USER and EMAIL_HOST_PASSWORD:
+    EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
+else:
+    EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
 

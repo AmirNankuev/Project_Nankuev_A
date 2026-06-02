@@ -19,6 +19,10 @@
             <button type="submit">Войти</button>
         </form>
 
+        <p class="auth-link-line">
+            <a href="{% url 'users:password_reset' %}">Забыли пароль?</a>
+        </p>
+
         <p class="auth-bottom">
             Ещё не зарегистрированы?
             <a href="{% url 'users:register' %}">Регистрация</a>

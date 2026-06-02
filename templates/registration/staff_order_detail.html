@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+
+{% block title %}Заказ {{ order.order_number }} — панель менеджера{% endblock %}
+
+{% block content %}
+<main class="profile-page staff-page">
+    <section class="profile-hero">
+        <div>
+            <p class="profile-kicker">Заказ</p>
+            <h1>{{ order.order_number }}</h1>
+            <p>{{ order.customer.full_name|default:order.customer.username }} · {{ order.created_at|date:"d.m.Y H:i" }}</p>
+        </div>
+
+        <div class="profile-status-card">
+            <span>Статус</span>
+            <strong>{{ order.get_status_display }}</strong>
+            <small>Оплата: {{ order.get_payment_status_display }}</small>
+        </div>
+    </section>
+
+    {% if messages %}
+        <div class="profile-messages">
+            {% for message in messages %}
+                <p class="profile-message profile-message--{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    <section class="profile-layout">
+        <aside class="profile-sidebar">
+            <a href="{% url 'users:staff_dashboard' %}">Сводка</a>
+            <a href="{% url 'users:staff_orders' %}" class="staff-active">Заказы</a>
+            <a href="{% url 'users:staff_returns' %}">Возвраты</a>
+            <a href="{% url 'admin:catalog_product_changelist' %}">Каталог</a>
+            {% if user.can_manage_users %}
+                <a href="{% url 'admin:users_customuser_changelist' %}">Пользователи</a>
+                <a href="{% url 'admin:main_shopsettings_changelist' %}">Настройки магазина</a>
+            {% endif %}
+            <a href="{% url 'admin:index' %}">Django Admin</a>
+            <form method="post" action="{% url 'users:logout' %}">
+                {% csrf_token %}
+                <button type="submit">Выйти</button>
+            </form>
+        </aside>
+
+        <div class="profile-main">
+            <section class="profile-card">
+                <div class="profile-section-head">
+                    <div>
+                        <p>Управление</p>
+                        <h2>Обработка заказа</h2>
+                    </div>
+                    <a href="{% url 'users:staff_orders' %}">← Все заказы</a>
+                </div>
+
+                <form method="post" class="staff-edit-form">
+                    {% csrf_token %}
+                    <label>
+                        Статус заказа
+                        <select name="status">
+                            {% for value, label in order_status_choices %}
+                                <option value="{{ value }}" {% if order.status == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <label>
+                        Статус оплаты
+                        <select name="payment_status">
+                            {% for value, label in payment_status_choices %}
+                                <option value="{{ value }}" {% if order.payment_status == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <label>
+                        Трек-номер доставки
+                        <input type="text" name="tracking_number" value="{{ order.tracking_number|default:'' }}" placeholder="Например, CDEK-123456789">
+                    </label>
+                    <button type="submit">Сохранить изменения</button>
+                </form>
+            </section>
+
+            <section class="profile-card">
+                <div class="profile-section-head">
+                    <div>
+                        <p>Состав</p>
+                        <h2>Товары в заказе</h2>
+                    </div>
+                    <span>{{ order_items|length }}</span>
+                </div>
+
+                <div class="profile-order-items staff-order-items">
+                    {% for item in order_items %}
+                        <article class="profile-order-item staff-order-item-card">
+                            {% with image=item.product_variant.product.staff_main_images.0 %}
+                                {% if image %}
+                                    <img src="{{ image.image.url }}" alt="{{ item.product_variant.product.name }}">
+                                {% else %}
+                                    <div class="profile-order-item-empty">Нет фото</div>
+                                {% endif %}
+                            {% endwith %}
+                            <div>
+                                <strong>{{ item.product_variant.product.name }}</strong>
+                                <span>{{ item.product_variant.color.name }} · {{ item.product_variant.size }}</span>
+                                <small>{{ item.quantity }} × {{ item.unit_price }} ₽ = {{ item.subtotal }} ₽</small>
+                                {% if item.return_request %}
+                                    <a href="{% url 'users:staff_return_detail' item.return_request.id %}" class="profile-return-status">Возврат: {{ item.return_request.get_status_display }}</a>
+                                {% endif %}
+                            </div>
+                        </article>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <section class="profile-card">
+                <div class="profile-section-head">
+                    <div>
+                        <p>Данные</p>
+                        <h2>Оплата и доставка</h2>
+                    </div>
+                    <a href="{% url 'checkout_payment' order.order_number %}">Открыть оплату</a>
+                </div>
+
+                <dl class="staff-detail-list">
+                    <div>
+                        <dt>Покупатель</dt>
+                        <dd>{{ order.customer.full_name|default:order.customer.username }} · {{ order.customer.email }} · {{ order.customer.phone }}</dd>
+                    </div>
+                    <div>
+                        <dt>Адрес</dt>
+                        <dd>{{ order.delivery_address }}</dd>
+                    </div>
+                    <div>
+                        <dt>Доставка</dt>
+                        <dd>{{ order.get_delivery_type_display }} · {{ order.delivery_price }} ₽</dd>
+                    </div>
+                    <div>
+                        <dt>Трек</dt>
+                        <dd>{{ order.tracking_number|default:"не указан" }}</dd>
+                    </div>
+                    <div>
+                        <dt>СДЭК</dt>
+                        <dd>{{ order.get_cdek_status_display }}{% if order.cdek_uuid %} · {{ order.cdek_uuid }}{% endif %}</dd>
+                    </div>
+                    <div>
+                        <dt>ЮKassa</dt>
+                        <dd>{{ order.get_yookassa_payment_status_display }}{% if order.yookassa_payment_id %} · {{ order.yookassa_payment_id }}{% endif %}</dd>
+                    </div>
+                    <div>
+                        <dt>Товары</dt>
+                        <dd>{{ items_total }} ₽</dd>
+                    </div>
+                    {% if order.promo_code %}
+                        <div>
+                            <dt>Промокод</dt>
+                            <dd>{{ order.promo_code.code }} · скидка −{{ order.discount_amount }} ₽</dd>
+                        </div>
+                    {% elif order.discount_amount %}
+                        <div>
+                            <dt>Скидка</dt>
+                            <dd>−{{ order.discount_amount }} ₽</dd>
+                        </div>
+                    {% endif %}
+                    <div>
+                        <dt>Итого</dt>
+                        <dd><strong>{{ order.total_amount }} ₽</strong></dd>
+                    </div>
+                </dl>
+            </section>
+        </div>
+    </section>
+</main>
+{% endblock %}

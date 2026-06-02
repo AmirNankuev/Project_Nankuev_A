@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+
+{% block title %}Панель {{ user.role_label|lower }}а — интернет-магазин одежды{% endblock %}
+
+{% block content %}
+<main class="profile-page">
+    <section class="profile-hero">
+        <div>
+            <p class="profile-kicker">Рабочая панель</p>
+            <h1>{{ user.role_label }}</h1>
+            <p>Здесь собраны быстрые показатели для обработки заказов, возвратов и складских остатков.</p>
+        </div>
+
+        <div class="profile-status-card">
+            <span>Текущая роль</span>
+            <strong>{{ user.role_label }}</strong>
+            <small>{% if user.can_manage_users %}Полный доступ{% else %}Операционный доступ{% endif %}</small>
+        </div>
+    </section>
+
+    {% if messages %}
+        <div class="profile-messages">
+            {% for message in messages %}
+                <p class="profile-message profile-message--{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    <section class="profile-layout">
+        <aside class="profile-sidebar">
+            <a href="{% url 'users:staff_dashboard' %}" class="staff-active">Сводка</a>
+            <a href="{% url 'users:staff_orders' %}">Заказы</a>
+            <a href="{% url 'users:staff_returns' %}">Возвраты</a>
+            <a href="{% url 'admin:catalog_product_changelist' %}">Каталог</a>
+            {% if user.can_manage_users %}
+                <a href="{% url 'admin:users_customuser_changelist' %}">Пользователи</a>
+                <a href="{% url 'admin:main_shopsettings_changelist' %}">Настройки магазина</a>
+            {% endif %}
+            <a href="{% url 'admin:index' %}">Django Admin</a>
+            <form method="post" action="{% url 'users:logout' %}">
+                {% csrf_token %}
+                <button type="submit">Выйти</button>
+            </form>
+        </aside>
+
+        <div class="profile-main">
+            <section class="profile-card">
+                <div class="profile-section-head">
+                    <div>
+                        <p>Контроль</p>
+                        <h2>Ключевые показатели</h2>
+                    </div>
+                    <span>{{ orders_processing }}</span>
+                </div>
+
+                <div class="staff-kpi-grid">
+                    <a href="{% url 'users:staff_orders' %}" class="staff-kpi-card">
+                        <span>Всего заказов</span>
+                        <strong>{{ orders_total }}</strong>
+                    </a>
+                    <a href="{% url 'users:staff_orders' %}?status=paid" class="staff-kpi-card">
+                        <span>Оплачено</span>
+                        <strong>{{ orders_paid }}</strong>
+                    </a>
+                    <a href="{% url 'users:staff_orders' %}?status=assembled" class="staff-kpi-card">
+                        <span>Готовы к доставке</span>
+                        <strong>{{ orders_ready_to_ship }}</strong>
+                    </a>
+                    <a href="{% url 'users:staff_orders' %}?status=shipped" class="staff-kpi-card">
+                        <span>В доставке</span>
+                        <strong>{{ orders_shipped }}</strong>
+                    </a>
+                    <a href="{% url 'users:staff_returns' %}?status=requested" class="staff-kpi-card staff-kpi-card--attention">
+                        <span>Новые возвраты</span>
+                        <strong>{{ returns_requested }}</strong>
+                    </a>
+                    <a href="{% url 'users:staff_returns' %}?status=approved" class="staff-kpi-card">
+                        <span>Одобрено возвратов</span>
+                        <strong>{{ returns_approved }}</strong>
+                    </a>
+                    <a href="{% url 'admin:catalog_product_changelist' %}" class="staff-kpi-card">
+                        <span>Товаров</span>
+                        <strong>{{ products_total }}</strong>
+                    </a>
+                    <a href="{% url 'admin:catalog_productvariant_changelist' %}" class="staff-kpi-card staff-kpi-card--attention">
+                        <span>Остатки ≤ 3</span>
+                        <strong>{{ low_stock_count }}</strong>
+                    </a>
+                </div>
+            </section>
+
+            <section class="profile-card">
+                <div class="profile-section-head">
+                    <div>
+                        <p>Заказы</p>
+                        <h2>Последние заказы</h2>
+                    </div>
+                    <a href="{% url 'users:staff_orders' %}">Открыть все</a>
+                </div>
+
+                <div class="profile-orders">
+                    {% for order in recent_orders %}
+                        <article class="profile-order-card staff-list-card">
+                            <div class="profile-order-top">
+                                <div>
+                                    <h3><a href="{% url 'users:staff_order_detail' order.id %}">{{ order.order_number }}</a></h3>
+                                    <p>{{ order.customer }} · {{ order.created_at|date:"d.m.Y H:i" }}</p>
+                                </div>
+                                <div>
+                                    <strong>{{ order.total_amount }} ₽</strong>
+                                    <span class="staff-status staff-status--{{ order.status }}">{{ order.get_status_display }}</span>
+                                </div>
+                            </div>
+                            <div class="profile-order-meta">
+                                <span>Оплата: {{ order.get_payment_status_display }}</span>
+                                <span>Доставка: {{ order.get_delivery_type_display }}</span>
+                                <span>Трек: {{ order.tracking_number|default:"не указан" }}</span>
+                            </div>
+                            <div class="staff-card-actions">
+                                <a href="{% url 'users:staff_order_detail' order.id %}">Открыть заказ</a>
+                                <a href="{% url 'checkout_payment' order.order_number %}">Страница оплаты</a>
+                            </div>
+                        </article>
+                    {% empty %}
+                        <div class="profile-empty-orders">
+                            <h3>Заказов пока нет</h3>
+                            <p>После оформления покупки новые заказы появятся здесь.</p>
+                        </div>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <section class="profile-card">
+                <div class="profile-section-head">
+                    <div>
+                        <p>Возвраты</p>
+                        <h2>Последние заявки</h2>
+                    </div>
+                    <a href="{% url 'users:staff_returns' %}">Открыть все</a>
+                </div>
+
+                <div class="profile-orders">
+                    {% for return_request in recent_returns %}
+                        <article class="profile-order-card staff-list-card">
+                            <div class="profile-order-top">
+                                <div>
+                                    <h3><a href="{% url 'users:staff_return_detail' return_request.id %}">{{ return_request.order_item.order.order_number }}</a></h3>
+                                    <p>{{ return_request.order_item.product_variant.product.name }}</p>
+                                </div>
+                                <div>
+                                    <strong>{{ return_request.refund_amount|default:return_request.order_item.subtotal }} ₽</strong>
+                                    <span class="staff-status staff-status--return-{{ return_request.status }}">{{ return_request.get_status_display }}</span>
+                                </div>
+                            </div>
+                            <div class="profile-order-meta">
+                                <span>Покупатель: {{ return_request.order_item.order.customer }}</span>
+                                <span>Состояние: {{ return_request.get_condition_display }}</span>
+                            </div>
+                            <div class="staff-card-actions">
+                                <a href="{% url 'users:staff_return_detail' return_request.id %}">Обработать возврат</a>
+                            </div>
+                        </article>
+                    {% empty %}
+                        <div class="profile-empty-orders">
+                            <h3>Возвратов пока нет</h3>
+                            <p>Новые заявки покупателей появятся в этом блоке.</p>
+                        </div>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <section class="profile-card">
+                <div class="profile-section-head">
+                    <div>
+                        <p>Склад</p>
+                        <h2>Низкие остатки</h2>
+                    </div>
+                    <a href="{% url 'admin:catalog_productvariant_changelist' %}">Открыть варианты</a>
+                </div>
+
+                <div class="profile-orders">
+                    {% for variant in low_stock_variants %}
+                        <article class="profile-order-card">
+                            <div class="profile-order-top">
+                                <div>
+                                    <h3>{{ variant.product.name }}</h3>
+                                    <p>{{ variant.color.name }} / {{ variant.size }}</p>
+                                </div>
+                                <div>
+                                    <strong>{{ variant.quantity }} шт.</strong>
+                                    <span>{{ variant.public_price_label }}</span>
+                                </div>
+                            </div>
+                        </article>
+                    {% empty %}
+                        <div class="profile-empty-orders">
+                            <h3>Критичных остатков нет</h3>
+                            <p>Все варианты товаров имеют больше 3 единиц на складе.</p>
+                        </div>
+                    {% endfor %}
+                </div>
+            </section>
+        </div>
+    </section>
+</main>
+{% endblock %}

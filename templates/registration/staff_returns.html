@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+
+{% block title %}Возвраты менеджера — интернет-магазин одежды{% endblock %}
+
+{% block content %}
+<main class="profile-page staff-page">
+    <section class="profile-hero">
+        <div>
+            <p class="profile-kicker">Панель менеджера</p>
+            <h1>Возвраты</h1>
+            <p>Здесь менеджер рассматривает заявки покупателей, одобряет или отклоняет возврат и завершает обработку после проверки товара.</p>
+        </div>
+
+        <div class="profile-status-card">
+            <span>Найдено</span>
+            <strong>{{ page_obj.paginator.count }}</strong>
+            <small>заявок с учётом фильтра</small>
+        </div>
+    </section>
+
+    {% if messages %}
+        <div class="profile-messages">
+            {% for message in messages %}
+                <p class="profile-message profile-message--{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    <section class="profile-layout">
+        <aside class="profile-sidebar">
+            <a href="{% url 'users:staff_dashboard' %}">Сводка</a>
+            <a href="{% url 'users:staff_orders' %}">Заказы</a>
+            <a href="{% url 'users:staff_returns' %}" class="staff-active">Возвраты</a>
+            <a href="{% url 'admin:catalog_product_changelist' %}">Каталог</a>
+            {% if user.can_manage_users %}
+                <a href="{% url 'admin:users_customuser_changelist' %}">Пользователи</a>
+                <a href="{% url 'admin:main_shopsettings_changelist' %}">Настройки магазина</a>
+            {% endif %}
+            <a href="{% url 'admin:index' %}">Django Admin</a>
+            <form method="post" action="{% url 'users:logout' %}">
+                {% csrf_token %}
+                <button type="submit">Выйти</button>
+            </form>
+        </aside>
+
+        <div class="profile-main">
+            <section class="profile-card staff-toolbar-card">
+                <form method="get" class="staff-search-form">
+                    <label>
+                        Поиск возврата
+                        <input type="search" name="q" value="{{ search_query }}" placeholder="Заказ, клиент, товар или причина">
+                    </label>
+                    {% if active_status %}
+                        <input type="hidden" name="status" value="{{ active_status }}">
+                    {% endif %}
+                    <button type="submit">Найти</button>
+                    {% if search_query or active_status %}
+                        <a href="{% url 'users:staff_returns' %}">Сбросить</a>
+                    {% endif %}
+                </form>
+
+                <div class="staff-status-tabs" aria-label="Фильтр статусов возврата">
+                    {% for tab in status_tabs %}
+                        <a href="{% url 'users:staff_returns' %}{% if tab.value %}?status={{ tab.value }}{% endif %}" class="{% if tab.active %}staff-active-tab{% endif %}">
+                            {{ tab.label }} <span>{{ tab.count }}</span>
+                        </a>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <section class="profile-card">
+                <div class="profile-section-head">
+                    <div>
+                        <p>Работа с возвратами</p>
+                        <h2>Список заявок</h2>
+                    </div>
+                    <a href="{% url 'users:staff_dashboard' %}">← К сводке</a>
+                </div>
+
+                <div class="profile-orders">
+                    {% for return_request in returns %}
+                        <article class="profile-order-card staff-return-card">
+                            <div class="profile-order-top">
+                                <div>
+                                    <h3><a href="{% url 'users:staff_return_detail' return_request.id %}">{{ return_request.order_item.order.order_number }}</a></h3>
+                                    <p>{{ return_request.order_item.order.customer.full_name|default:return_request.order_item.order.customer.username }} · {{ return_request.created_at|date:"d.m.Y H:i" }}</p>
+                                </div>
+                                <div>
+                                    <strong>{{ return_request.refund_amount|default:return_request.order_item.subtotal }} ₽</strong>
+                                    <span class="staff-status staff-status--return-{{ return_request.status }}">{{ return_request.get_status_display }}</span>
+                                </div>
+                            </div>
+
+                            <div class="profile-order-meta">
+                                <span>Товар: {{ return_request.order_item.product_variant.product.name }}</span>
+                                <span>Размер/цвет: {{ return_request.order_item.product_variant.size }} · {{ return_request.order_item.product_variant.color.name }}</span>
+                                <span>Состояние: {{ return_request.get_condition_display }}</span>
+                            </div>
+
+                            <p class="staff-return-reason">{{ return_request.reason|truncatechars:220 }}</p>
+
+                            <form method="post" class="staff-return-actions">
+                                {% csrf_token %}
+                                <input type="hidden" name="return_id" value="{{ return_request.id }}">
+                                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                                <label>
+                                    Сумма возврата
+                                    <input type="number" name="refund_amount" step="0.01" min="0" value="{{ return_request.refund_amount|default:return_request.order_item.subtotal }}">
+                                </label>
+                                <button type="submit" name="action" value="approve">Одобрить</button>
+                                <button type="submit" name="action" value="complete">Завершить</button>
+                                <button type="submit" name="action" value="reject" class="staff-danger-button">Отклонить</button>
+                                <a href="{% url 'users:staff_return_detail' return_request.id %}">Подробнее</a>
+                            </form>
+                        </article>
+                    {% empty %}
+                        <div class="profile-empty-orders">
+                            <h3>Заявки не найдены</h3>
+                            <p>Попробуйте изменить строку поиска или фильтр статуса.</p>
+                        </div>
+                    {% endfor %}
+                </div>
+
+                {% if page_obj.paginator.num_pages > 1 %}
+                    <nav class="staff-pagination" aria-label="Страницы возвратов">
+                        {% if page_obj.has_previous %}
+                            <a href="?page={{ page_obj.previous_page_number }}{% if active_status %}&status={{ active_status }}{% endif %}{% if search_query %}&q={{ search_query }}{% endif %}">← Назад</a>
+                        {% endif %}
+                        <span>Страница {{ page_obj.number }} из {{ page_obj.paginator.num_pages }}</span>
+                        {% if page_obj.has_next %}
+                            <a href="?page={{ page_obj.next_page_number }}{% if active_status %}&status={{ active_status }}{% endif %}{% if search_query %}&q={{ search_query }}{% endif %}">Вперёд →</a>
+                        {% endif %}
+                    </nav>
+                {% endif %}
+            </section>
+        </div>
+    </section>
+</main>
+{% endblock %}

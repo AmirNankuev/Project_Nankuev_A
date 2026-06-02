@@ -29,6 +29,7 @@
     <section class="profile-layout">
         <aside class="profile-sidebar">
             <a href="#profile-data">Мои данные</a>
+            <a href="{% url 'users:password_change' %}">Сменить пароль</a>
             <a href="#profile-orders">Мои заказы</a>
             <a href="{% url 'cart' %}">Корзина</a>
             <form method="post" action="{% url 'users:logout' %}">
@@ -45,6 +46,15 @@
                         <h2>Мои данные</h2>
                     </div>
                     <span>{{ user.username }}</span>
+                </div>
+
+                <div class="profile-email-status">
+                    <span>Email: {{ user.email }}</span>
+                    {% if user.email_confirmed %}
+                        <strong>Подтверждён</strong>
+                    {% else %}
+                        <strong class="profile-email-status__bad">Не подтверждён</strong>
+                    {% endif %}
                 </div>
 
                 <form method="post" class="profile-form">
@@ -90,6 +100,9 @@
                             <div class="profile-order-meta">
                                 <span>Оплата: {{ order.get_payment_status_display }}</span>
                                 <span>Доставка: {{ order.get_delivery_type_display }}</span>
+                                {% if order.promo_code %}
+                                    <span>Промокод: {{ order.promo_code.code }} −{{ order.discount_amount }} ₽</span>
+                                {% endif %}
                             </div>
 
                             <div class="profile-order-items">
@@ -114,6 +127,10 @@
                                                         </a>
                                                     {% elif item.can_create_return %}
                                                         <a href="{% url 'return_create' item.id %}" class="profile-return-button">Оформить возврат</a>
+                                                        <small>Доступно до {{ item.order.return_deadline_label }}</small>
+                                                    {% elif item.return_period_expired %}
+                                                        <span class="profile-return-status profile-return-status--expired">Срок возврата истёк</span>
+                                                        <small>Был доступен до {{ item.order.return_deadline_label }}</small>
                                                     {% endif %}
                                                 </div>
                                             </div>

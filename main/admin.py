@@ -1,7 +1,7 @@
 from django.contrib import admin, messages
 from django.utils import timezone
 
-from .models import CustomerProfile, Order, OrderItem, ReturnRequest, CartItem
+from .models import CustomerProfile, Order, OrderItem, PromoCode, ReturnRequest, CartItem, ShopSettings
 
 
 @admin.register(CustomerProfile)
@@ -10,6 +10,76 @@ class CustomerProfileAdmin(admin.ModelAdmin):
     search_fields = ("user__username", "user__email", "phone")
     list_filter = ("account_status",)
     ordering = ("-registration_date",)
+
+
+
+
+@admin.register(ShopSettings)
+class ShopSettingsAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "return_period_days",
+        "free_delivery_from",
+        "shop_phone",
+        "shop_email",
+        "updated_at",
+    )
+    readonly_fields = ("updated_at",)
+    fieldsets = (
+        ("Возвраты", {
+            "fields": ("return_period_days",),
+        }),
+        ("Доставка", {
+            "fields": ("free_delivery_from", "delivery_terms"),
+        }),
+        ("Оплата и контакты", {
+            "fields": ("payment_terms", "shop_phone", "shop_email"),
+        }),
+        ("Служебные данные", {
+            "fields": ("updated_at",),
+        }),
+    )
+
+    def has_add_permission(self, request):
+        return not ShopSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+@admin.register(PromoCode)
+class PromoCodeAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "code",
+        "name",
+        "discount_type",
+        "discount_value",
+        "min_order_amount",
+        "max_uses",
+        "used_count",
+        "is_active",
+        "starts_at",
+        "ends_at",
+    )
+    list_display_links = ("id", "code")
+    search_fields = ("code", "name")
+    list_filter = ("discount_type", "is_active", "starts_at", "ends_at")
+    readonly_fields = ("used_count", "created_at", "updated_at")
+    ordering = ("code",)
+    fieldsets = (
+        ("Основное", {
+            "fields": ("code", "name", "is_active"),
+        }),
+        ("Скидка", {
+            "fields": ("discount_type", "discount_value", "max_discount_amount", "min_order_amount"),
+        }),
+        ("Ограничения", {
+            "fields": ("starts_at", "ends_at", "max_uses", "used_count"),
+        }),
+        ("Служебные данные", {
+            "fields": ("created_at", "updated_at"),
+        }),
+    )
 
 
 class OrderItemInline(admin.TabularInline):
@@ -32,6 +102,8 @@ class OrderAdmin(admin.ModelAdmin):
         "payment_status",
         "yookassa_payment_status",
         "total_amount",
+        "discount_amount",
+        "promo_code",
         "delivery_price",
         "cdek_status",
         "created_at",
@@ -45,8 +117,9 @@ class OrderAdmin(admin.ModelAdmin):
         "tracking_number",
         "cdek_uuid",
         "yookassa_payment_id",
+        "promo_code__code",
     )
-    list_filter = ("status", "payment_status", "yookassa_payment_status", "delivery_type", "payment_method", "cdek_status", "created_at")
+    list_filter = ("status", "payment_status", "yookassa_payment_status", "delivery_type", "payment_method", "cdek_status", "promo_code", "created_at")
     readonly_fields = ("order_number", "customer", "total_amount", "cdek_response", "cdek_error", "yookassa_response", "yookassa_error", "created_at", "updated_at")
     inlines = (OrderItemInline,)
     ordering = ("-created_at",)
@@ -56,6 +129,9 @@ class OrderAdmin(admin.ModelAdmin):
         }),
         ("Доставка и оплата", {
             "fields": ("delivery_address", "delivery_type", "delivery_price", "payment_method", "payment_status", "tracking_number"),
+        }),
+        ("Промокод и скидка", {
+            "fields": ("promo_code", "discount_amount"),
         }),
         ("ЮKassa", {
             "fields": (

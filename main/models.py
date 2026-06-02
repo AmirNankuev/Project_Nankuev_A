@@ -2,8 +2,9 @@ from decimal import Decimal
 from uuid import uuid4
 
 from django.conf import settings
-from django.core.validators import MinValueValidator
+from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
+from django.utils import timezone
 
 
 class CustomerProfile(models.Model):
@@ -46,6 +47,208 @@ class CustomerProfile(models.Model):
             return f"{full_name} ({self.user.email})"
 
         return self.user.email or self.user.username
+
+
+
+class PromoCode(models.Model):
+    class DiscountType(models.TextChoices):
+        PERCENT = "percent", "Процент"
+        FIXED = "fixed", "Фиксированная сумма"
+
+    code = models.CharField(
+        "Код промокода",
+        max_length=40,
+        unique=True,
+        db_index=True,
+        help_text="Например: SALE10 или NEWYEAR500.",
+    )
+    name = models.CharField(
+        "Название акции",
+        max_length=150,
+        blank=True,
+    )
+    discount_type = models.CharField(
+        "Тип скидки",
+        max_length=20,
+        choices=DiscountType.choices,
+        default=DiscountType.PERCENT,
+    )
+    discount_value = models.DecimalField(
+        "Размер скидки",
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal("0.01"))],
+        help_text="Для процента укажите число от 1 до 100. Для фиксированной скидки — сумму в рублях.",
+    )
+    max_discount_amount = models.DecimalField(
+        "Максимальная скидка",
+        max_digits=10,
+        decimal_places=2,
+        blank=True,
+        null=True,
+        validators=[MinValueValidator(Decimal("0.00"))],
+        help_text="Необязательно. Ограничивает скидку по процентному промокоду.",
+    )
+    min_order_amount = models.DecimalField(
+        "Минимальная сумма заказа",
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        validators=[MinValueValidator(Decimal("0.00"))],
+    )
+    starts_at = models.DateTimeField(
+        "Начало действия",
+        blank=True,
+        null=True,
+    )
+    ends_at = models.DateTimeField(
+        "Окончание действия",
+        blank=True,
+        null=True,
+    )
+    max_uses = models.PositiveIntegerField(
+        "Лимит использований",
+        blank=True,
+        null=True,
+        help_text="Оставьте пустым, если лимита нет.",
+    )
+    used_count = models.PositiveIntegerField(
+        "Использовано",
+        default=0,
+    )
+    is_active = models.BooleanField(
+        "Активен",
+        default=True,
+    )
+    created_at = models.DateTimeField(
+        "Дата создания",
+        auto_now_add=True,
+    )
+    updated_at = models.DateTimeField(
+        "Дата обновления",
+        auto_now=True,
+    )
+
+    class Meta:
+        verbose_name = "Промокод"
+        verbose_name_plural = "Промокоды"
+        ordering = ["code"]
+
+    def save(self, *args, **kwargs):
+        self.code = (self.code or "").strip().upper()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.code
+
+    @property
+    def has_usage_limit_reached(self):
+        return self.max_uses is not None and self.used_count >= self.max_uses
+
+    def is_valid_for_amount(self, order_amount, now=None):
+        return self.get_unavailable_reason(order_amount, now=now) == ""
+
+    def get_unavailable_reason(self, order_amount, now=None):
+        now = now or timezone.now()
+        order_amount = order_amount or Decimal("0.00")
+
+        if not self.is_active:
+            return "Промокод отключён."
+        if self.starts_at and self.starts_at > now:
+            return "Промокод ещё не начал действовать."
+        if self.ends_at and self.ends_at < now:
+            return "Срок действия промокода истёк."
+        if self.has_usage_limit_reached:
+            return "Промокод уже использован максимальное количество раз."
+        if order_amount < self.min_order_amount:
+            return f"Промокод действует от суммы {self.min_order_amount} ₽."
+        return ""
+
+    def calculate_discount(self, order_amount):
+        order_amount = order_amount or Decimal("0.00")
+
+        if order_amount <= Decimal("0.00"):
+            return Decimal("0.00")
+
+        if self.discount_type == self.DiscountType.FIXED:
+            discount = self.discount_value
+        else:
+            discount = order_amount * self.discount_value / Decimal("100")
+            if self.max_discount_amount is not None:
+                discount = min(discount, self.max_discount_amount)
+
+        discount = max(Decimal("0.00"), min(discount, order_amount))
+        return discount.quantize(Decimal("0.01"))
+
+
+class ShopSettings(models.Model):
+    singleton_name = models.CharField(
+        "Служебное имя",
+        max_length=30,
+        default="main",
+        unique=True,
+        editable=False,
+    )
+    return_period_days = models.PositiveIntegerField(
+        "Срок возврата, дней",
+        default=14,
+        validators=[MinValueValidator(1), MaxValueValidator(365)],
+        help_text="Количество дней после оформления заказа, в течение которых покупатель может создать заявку на возврат.",
+    )
+    free_delivery_from = models.DecimalField(
+        "Бесплатная доставка от суммы",
+        max_digits=10,
+        decimal_places=2,
+        blank=True,
+        null=True,
+        validators=[MinValueValidator(Decimal("0.00"))],
+        help_text="Оставьте пустым или укажите 0, если бесплатная доставка отключена.",
+    )
+    shop_phone = models.CharField(
+        "Телефон магазина",
+        max_length=50,
+        blank=True,
+    )
+    shop_email = models.EmailField(
+        "Email магазина",
+        blank=True,
+    )
+    delivery_terms = models.TextField(
+        "Условия доставки",
+        blank=True,
+    )
+    payment_terms = models.TextField(
+        "Условия оплаты",
+        blank=True,
+    )
+    updated_at = models.DateTimeField(
+        "Дата обновления",
+        auto_now=True,
+    )
+
+    class Meta:
+        verbose_name = "Настройки магазина"
+        verbose_name_plural = "Настройки магазина"
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        self.singleton_name = "main"
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        return None
+
+    def __str__(self):
+        return "Настройки магазина"
+
+    @classmethod
+    def load(cls):
+        obj, _ = cls.objects.get_or_create(pk=1, defaults={"singleton_name": "main"})
+        return obj
+
+    @property
+    def free_delivery_enabled(self):
+        return bool(self.free_delivery_from and self.free_delivery_from > Decimal("0.00"))
 
 
 def generate_order_number():
@@ -141,6 +344,23 @@ class Order(models.Model):
     )
     delivery_price = models.DecimalField(
         "Стоимость доставки",
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        validators=[
+            MinValueValidator(Decimal("0.00")),
+        ],
+    )
+    promo_code = models.ForeignKey(
+        PromoCode,
+        verbose_name="Промокод",
+        on_delete=models.SET_NULL,
+        related_name="orders",
+        blank=True,
+        null=True,
+    )
+    discount_amount = models.DecimalField(
+        "Скидка",
         max_digits=10,
         decimal_places=2,
         default=Decimal("0.00"),
@@ -246,9 +466,31 @@ class Order(models.Model):
             models.Index(fields=["payment_status"]),
         ]
 
+    @property
+    def shop_settings(self):
+        return ShopSettings.load()
+
+    @property
+    def return_period_days(self):
+        return self.shop_settings.return_period_days
+
+    @property
+    def return_deadline(self):
+        return self.created_at + timezone.timedelta(days=self.return_period_days)
+
+    @property
+    def return_period_is_active(self):
+        return timezone.now() <= self.return_deadline
+
+    @property
+    def return_deadline_label(self):
+        return timezone.localtime(self.return_deadline).strftime("%d.%m.%Y %H:%M")
+
     def recalculate_total(self):
         items_total = sum(item.subtotal for item in self.items.all())
-        self.total_amount = items_total + (self.delivery_price or Decimal("0.00"))
+        discount = self.discount_amount or Decimal("0.00")
+        items_after_discount = max(items_total - discount, Decimal("0.00"))
+        self.total_amount = items_after_discount + (self.delivery_price or Decimal("0.00"))
         self.save(update_fields=["total_amount"])
 
     def __str__(self):
@@ -312,12 +554,20 @@ class OrderItem(models.Model):
         return hasattr(self, "return_request")
 
     @property
-    def can_create_return(self):
+    def can_create_return_by_status(self):
         allowed_order_statuses = {"paid", "processing", "assembled", "shipped", "delivered"}
+        return self.order.payment_status == "paid" and self.order.status in allowed_order_statuses
+
+    @property
+    def return_period_expired(self):
+        return self.can_create_return_by_status and not self.order.return_period_is_active
+
+    @property
+    def can_create_return(self):
         return (
             not self.has_return_request
-            and self.order.payment_status == "paid"
-            and self.order.status in allowed_order_statuses
+            and self.can_create_return_by_status
+            and self.order.return_period_is_active
         )
 
     def __str__(self):

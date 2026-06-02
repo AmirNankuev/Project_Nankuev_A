@@ -75,17 +75,37 @@
                     {% endif %}
                 </p>
 
+                {% if promo %}
+                    <div class="delivery-quote promo-delivery-note">
+                        <strong>Промокод {{ promo.code }}</strong>
+                        <span>Скидка: −{{ promo_discount_label }}</span>
+                        <small>Чтобы изменить промокод, вернитесь на шаг «Данные».</small>
+                    </div>
+                {% endif %}
+
                 {% if cdek_quote %}
                     <div class="delivery-quote">
                         <strong>{{ cart_shipping_label }}</strong>
                         <span>
-                            {% if cdek_quote.period_min and cdek_quote.period_max %}
+                            {% if cdek_quote.free_delivery_applied %}
+                                Бесплатная доставка применена: сумма товаров после скидки от {{ cdek_quote.free_delivery_from_label }}.
+                                Расчётная стоимость СДЭК: {{ cdek_quote.original_delivery_sum_label }}.
+                            {% elif cdek_quote.period_min and cdek_quote.period_max %}
                                 Срок доставки: {{ cdek_quote.period_min }}–{{ cdek_quote.period_max }} дн.
                             {% else %}
                                 Срок доставки будет уточнён СДЭК.
                             {% endif %}
                         </span>
                         <small>Тариф СДЭК: {{ cdek_quote.tariff_code }}</small>
+                    </div>
+                {% elif free_delivery_from %}
+                    <p class="checkout-hint">Бесплатная доставка применяется от суммы {{ free_delivery_from_label }} после скидок.</p>
+                {% endif %}
+
+                {% if shop_settings.delivery_terms %}
+                    <div class="checkout-summary-note">
+                        <h2>Условия доставки</h2>
+                        <p>{{ shop_settings.delivery_terms|linebreaksbr }}</p>
                     </div>
                 {% endif %}
 
@@ -101,6 +121,13 @@
                         Сейчас включён демо-режим: вместо внешней ЮKassa будет локальная кнопка тестовой оплаты.
                     {% endif %}
                 </p>
+
+                {% if shop_settings.payment_terms %}
+                    <div class="checkout-summary-note">
+                        <h2>Условия оплаты</h2>
+                        <p>{{ shop_settings.payment_terms|linebreaksbr }}</p>
+                    </div>
+                {% endif %}
 
                 <div class="checkout-actions">
                     <button type="submit" name="action" value="calculate">Рассчитать доставку <span>→</span></button>
@@ -152,6 +179,12 @@
                 <dt>Доставка</dt>
                 <dd>{% if cdek_quote or order_submitted %}{{ cart_shipping_label }}{% else %}рассчитайте СДЭК{% endif %}</dd>
             </div>
+            {% if promo %}
+                <div>
+                    <dt>Промокод {{ promo.code }}</dt>
+                    <dd>−{{ promo_discount_label }}</dd>
+                </div>
+            {% endif %}
             <div>
                 <dt>Итого</dt>
                 <dd>{{ cart_total_label }}</dd>

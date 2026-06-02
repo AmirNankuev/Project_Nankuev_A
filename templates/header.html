@@ -14,10 +14,17 @@
     <div class="header-actions">
         <button class="header-search-btn" type="button" data-search-open aria-label="Открыть поиск">⌕</button>
 
-        <a href="{% url 'cart' %}" class="cart-btn">Корзина{% if header_cart_count %} ({{ header_cart_count }}){% endif %}</a>
+        {% if not user.is_authenticated or user.is_customer_role %}
+            <a href="{% url 'cart' %}" class="cart-btn">Корзина{% if header_cart_count %} ({{ header_cart_count }}){% endif %}</a>
+        {% endif %}
 
         {% if user.is_authenticated %}
-            <a href="{% url 'users:profile' %}" class="user-name">{{ user.username }}</a>
+            {% if user.can_manage_shop %}
+                <a href="{% url 'users:staff_dashboard' %}" class="user-name">{{ user.role_label }}: {{ user.username }}</a>
+                <a href="{% url 'admin:index' %}" class="auth-btn">Админка</a>
+            {% else %}
+                <a href="{% url 'users:profile' %}" class="user-name">{{ user.username }}</a>
+            {% endif %}
 
             <form method="post" action="{% url 'users:logout' %}" class="logout-form">
                 {% csrf_token %}

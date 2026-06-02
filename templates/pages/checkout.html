@@ -55,7 +55,18 @@
 
             <p class="checkout-hint">
                 На следующем шаге будет отдельная страница доставки СДЭК с расчётом стоимости и срока доставки.
+                {% if free_delivery_from %}
+                    Бесплатная доставка применяется от {{ free_delivery_from_label }} после скидок.
+                {% endif %}
             </p>
+
+            {% if shop_settings.shop_phone or shop_settings.shop_email %}
+                <p class="checkout-hint">
+                    Контакты магазина:
+                    {% if shop_settings.shop_phone %}{{ shop_settings.shop_phone }}{% endif %}
+                    {% if shop_settings.shop_email %}{% if shop_settings.shop_phone %} · {% endif %}{{ shop_settings.shop_email }}{% endif %}
+                </p>
+            {% endif %}
 
             <button type="submit">Перейти к доставке <span>→</span></button>
         </form>
@@ -92,6 +103,30 @@
             <p class="checkout-empty">Корзина пуста.</p>
         {% endif %}
 
+        {% if cart_items %}
+            <div class="promo-box checkout-promo-box">
+                {% if promo %}
+                    <div class="promo-applied">
+                        <span>Применён промокод</span>
+                        <strong>{{ promo.code }}</strong>
+                    </div>
+                    <form method="post">
+                        {% csrf_token %}
+                        <button type="submit" name="action" value="remove_promo">Удалить</button>
+                    </form>
+                {% else %}
+                    <form method="post" class="promo-form">
+                        {% csrf_token %}
+                        <label for="checkout-promo-code">Промокод</label>
+                        <div>
+                            <input id="checkout-promo-code" type="text" name="promo_code" placeholder="SALE10">
+                            <button type="submit" name="action" value="apply_promo">OK</button>
+                        </div>
+                    </form>
+                {% endif %}
+            </div>
+        {% endif %}
+
         <dl class="checkout-totals">
             <div>
                 <dt>Товары</dt>
@@ -101,6 +136,12 @@
                 <dt>Доставка</dt>
                 <dd>{% if cart_items %}на следующем шаге{% else %}—{% endif %}</dd>
             </div>
+            {% if promo %}
+                <div>
+                    <dt>Промокод {{ promo.code }}</dt>
+                    <dd>−{{ promo_discount_label }}</dd>
+                </div>
+            {% endif %}
             <div>
                 <dt>Итого</dt>
                 <dd>{{ cart_total_label }}</dd>

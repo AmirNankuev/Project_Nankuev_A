@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block title %}Ссылка недействительна — интернет-магазин одежды{% endblock %}
+
+{% block content %}
+<main class="auth-page">
+    <section class="auth-card auth-card--wide">
+        <a href="{% url 'home' %}" class="auth-back">← На главную</a>
+
+        <h1>Ссылка недействительна</h1>
+        <p>
+            Ссылка подтверждения email устарела или была использована ранее.
+            Попробуйте зарегистрироваться снова или обратитесь к администратору магазина.
+        </p>
+
+        <p class="auth-bottom">
+            <a href="{% url 'users:register' %}">Вернуться к регистрации</a>
+        </p>
+    </section>
+</main>
+{% endblock %}

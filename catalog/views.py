@@ -10,8 +10,15 @@ from django.db.models import Q, Prefetch
 from django.shortcuts import render, get_object_or_404, redirect
 
 from main.forms import ReturnRequestForm
-from main.models import Order, OrderItem, ReturnRequest
+from main.email_notifications import (
+    notify_order_created,
+    notify_order_status_changed,
+    notify_return_request_created,
+)
+from main.models import Order, OrderItem, PromoCode, ReturnRequest, ShopSettings
 from main.services.cdek import CdekApiError, CdekClient
+from users.decorators import customer_required
+
 from main.services.yookassa_payment import (
     YooKassaApiError,
     YooKassaClient,
@@ -440,12 +447,126 @@ def product_detail_by_pk(request, pk):
 
 
 CART_SESSION_KEY = "cart"
+PROMO_SESSION_KEY = "promo_code"
 CART_SHIPPING_PRICE = Decimal("0.00")
+
+
+def _shop_settings():
+    return ShopSettings.load()
+
+
+def _free_delivery_threshold():
+    settings_obj = _shop_settings()
+    if settings_obj.free_delivery_enabled:
+        return settings_obj.free_delivery_from
+    return None
+
+
+def _free_delivery_applies(cart_context, delivery_sum):
+    threshold = _free_delivery_threshold()
+    if not threshold:
+        return False
+
+    subtotal_after_discount = cart_context.get("cart_subtotal_after_discount", Decimal("0.00"))
+    return delivery_sum > Decimal("0.00") and subtotal_after_discount >= threshold
+
+
+def _apply_shop_delivery_rules(cart_context, delivery_info):
+    delivery_info = dict(delivery_info)
+    original_sum = delivery_info.get("delivery_sum") or Decimal("0.00")
+    threshold = _free_delivery_threshold()
+
+    delivery_info["original_delivery_sum"] = original_sum
+    delivery_info["free_delivery_from"] = threshold
+    delivery_info["free_delivery_applied"] = _free_delivery_applies(cart_context, original_sum)
+
+    if delivery_info["free_delivery_applied"]:
+        delivery_info["delivery_sum"] = Decimal("0.00")
+
+    return delivery_info
 
 
 def _money_label(value):
     value = value or Decimal("0.00")
     return f"{value.quantize(Decimal('0.01'))} ₽"
+
+
+def _clear_promo(request):
+    request.session.pop(PROMO_SESSION_KEY, None)
+    request.session.modified = True
+
+
+def _get_session_promo(request):
+    code = request.session.get(PROMO_SESSION_KEY, "")
+    if not code:
+        return None
+
+    try:
+        return PromoCode.objects.get(code=str(code).strip().upper())
+    except PromoCode.DoesNotExist:
+        _clear_promo(request)
+        return None
+
+
+def _promo_context(request, subtotal):
+    promo = _get_session_promo(request)
+    discount = Decimal("0.00")
+    promo_error = ""
+
+    if promo is not None:
+        promo_error = promo.get_unavailable_reason(subtotal)
+        if promo_error:
+            _clear_promo(request)
+            promo = None
+        else:
+            discount = promo.calculate_discount(subtotal)
+
+    return {
+        "promo": promo,
+        "promo_code": promo.code if promo else "",
+        "promo_discount": discount,
+        "promo_discount_label": _money_label(discount),
+        "promo_error": promo_error,
+    }
+
+
+def _apply_promo(request, subtotal):
+    raw_code = request.POST.get("promo_code", "")
+    code = raw_code.strip().upper()
+
+    if not code:
+        messages.error(request, "Введите промокод.")
+        return
+
+    try:
+        promo = PromoCode.objects.get(code=code)
+    except PromoCode.DoesNotExist:
+        messages.error(request, "Такого промокода нет.")
+        return
+
+    reason = promo.get_unavailable_reason(subtotal)
+    if reason:
+        messages.error(request, reason)
+        return
+
+    request.session[PROMO_SESSION_KEY] = promo.code
+    request.session.modified = True
+    messages.success(request, f"Промокод {promo.code} применён. Скидка: {_money_label(promo.calculate_discount(subtotal))}.")
+
+
+def _handle_promo_action(request, subtotal):
+    action = request.POST.get("action")
+
+    if action == "apply_promo":
+        _apply_promo(request, subtotal)
+        return True
+
+    if action == "remove_promo":
+        _clear_promo(request)
+        messages.info(request, "Промокод удалён.")
+        return True
+
+    return False
 
 
 def _get_cart(request):
@@ -525,23 +646,49 @@ def _cart_context(request):
             "decrease_quantity": quantity - 1,
         })
 
+    promo_data = _promo_context(request, subtotal) if items else {
+        "promo": None,
+        "promo_code": "",
+        "promo_discount": Decimal("0.00"),
+        "promo_discount_label": _money_label(Decimal("0.00")),
+        "promo_error": "",
+    }
+    discount = promo_data["promo_discount"]
     shipping = CART_SHIPPING_PRICE if items else Decimal("0.00")
-    total = subtotal + shipping
+    subtotal_after_discount = max(subtotal - discount, Decimal("0.00"))
+    total = subtotal_after_discount + shipping
 
     return {
         "cart_items": items,
         "cart_count": total_quantity,
         "cart_subtotal": subtotal,
         "cart_subtotal_label": _money_label(subtotal),
+        "cart_subtotal_after_discount": subtotal_after_discount,
+        "cart_subtotal_after_discount_label": _money_label(subtotal_after_discount),
         "cart_shipping": shipping,
         "cart_shipping_label": _money_label(shipping),
         "cart_total": total,
         "cart_total_label": _money_label(total),
+        "shop_settings": _shop_settings(),
+        "free_delivery_from": _free_delivery_threshold(),
+        "free_delivery_from_label": _money_label(_free_delivery_threshold()) if _free_delivery_threshold() else "",
+        **promo_data,
     }
 
 
+def _customer_features_allowed(request):
+    if request.user.is_authenticated and not getattr(request.user, "is_customer_role", False):
+        messages.error(request, "Корзина и оформление заказа доступны только покупателю.")
+        return False
+    return True
+
+
 def cart_detail(request):
-    return render(request, "pages/cart.html", _cart_context(request))
+    if not _customer_features_allowed(request):
+        return redirect("users:staff_dashboard")
+
+    context = _cart_context(request)
+    return render(request, "pages/cart.html", context)
 
 
 def _redirect_after_cart_action(request):
@@ -565,6 +712,9 @@ def _add_variant_to_cart(request, variant):
 
 
 def cart_add(request, variant_id):
+    if not _customer_features_allowed(request):
+        return redirect("users:staff_dashboard")
+
     variant = get_object_or_404(
         ProductVariant.objects.select_related("product"),
         pk=variant_id,
@@ -575,6 +725,9 @@ def cart_add(request, variant_id):
 
 
 def cart_add_product(request, product_id):
+    if not _customer_features_allowed(request):
+        return redirect("users:staff_dashboard")
+
     product = get_object_or_404(Product.objects.filter(is_active=True), pk=product_id)
     variant = (
         ProductVariant.objects
@@ -600,6 +753,9 @@ def cart_add_product(request, product_id):
 
 
 def cart_update(request, variant_id):
+    if not _customer_features_allowed(request):
+        return redirect("users:staff_dashboard")
+
     get_object_or_404(ProductVariant, pk=variant_id)
     cart = _get_cart(request)
     key = str(variant_id)
@@ -619,6 +775,9 @@ def cart_update(request, variant_id):
 
 
 def cart_remove(request, variant_id):
+    if not _customer_features_allowed(request):
+        return redirect("users:staff_dashboard")
+
     cart = _get_cart(request)
     cart.pop(str(variant_id), None)
     request.session.modified = True
@@ -679,6 +838,9 @@ def _payment_requires_yookassa(payment_method):
 
 
 def _update_order_from_yookassa_payment(order, payment_payload):
+    old_status = order.status
+    old_payment_status = order.payment_status
+
     status = payment_payload.get("status") or "pending"
     fields_to_update = [
         "payment_status",
@@ -698,6 +860,7 @@ def _update_order_from_yookassa_payment(order, payment_payload):
         order.payment_status = "failed"
 
     order.save(update_fields=fields_to_update)
+    notify_order_status_changed(order, old_status=old_status, old_payment_status=old_payment_status)
     return order
 
 
@@ -741,6 +904,9 @@ def _quote_to_session_payload(delivery_info, delivery_type, cdek_city_code):
         "delivery_type": delivery_type,
         "cdek_city_code": str(cdek_city_code),
         "delivery_sum": str(delivery_info["delivery_sum"]),
+        "original_delivery_sum": str(delivery_info.get("original_delivery_sum", delivery_info["delivery_sum"])),
+        "free_delivery_from": str(delivery_info["free_delivery_from"]) if delivery_info.get("free_delivery_from") else "",
+        "free_delivery_applied": bool(delivery_info.get("free_delivery_applied")),
         "period_min": delivery_info.get("period_min"),
         "period_max": delivery_info.get("period_max"),
         "tariff_code": delivery_info.get("tariff_code"),
@@ -755,10 +921,16 @@ def _quote_from_session(payload):
     if delivery_sum is None:
         return None
 
+    original_delivery_sum = _to_decimal(payload.get("original_delivery_sum")) or delivery_sum
+    free_delivery_from = _to_decimal(payload.get("free_delivery_from"))
+
     return {
         "delivery_type": payload.get("delivery_type") or "cdek_courier",
         "cdek_city_code": payload.get("cdek_city_code") or "",
         "delivery_sum": delivery_sum,
+        "original_delivery_sum": original_delivery_sum,
+        "free_delivery_from": free_delivery_from,
+        "free_delivery_applied": bool(payload.get("free_delivery_applied")),
         "period_min": payload.get("period_min"),
         "period_max": payload.get("period_max"),
         "tariff_code": payload.get("tariff_code"),
@@ -798,10 +970,19 @@ def _delivery_page_context(request, cart_context, *, order=None, quote=None, del
 
     if quote:
         shipping = quote["delivery_sum"]
-        total = context["cart_subtotal"] + shipping
+        quote["delivery_sum_label"] = _money_label(quote.get("delivery_sum"))
+        quote["original_delivery_sum_label"] = _money_label(quote.get("original_delivery_sum", quote.get("delivery_sum")))
+        quote["free_delivery_from_label"] = _money_label(quote.get("free_delivery_from")) if quote.get("free_delivery_from") else ""
+        subtotal_after_discount = max(
+            context["cart_subtotal"] - context.get("promo_discount", Decimal("0.00")),
+            Decimal("0.00"),
+        )
+        total = subtotal_after_discount + shipping
         context.update({
             "cart_shipping": shipping,
             "cart_shipping_label": _money_label(shipping),
+            "cart_subtotal_after_discount": subtotal_after_discount,
+            "cart_subtotal_after_discount_label": _money_label(subtotal_after_discount),
             "cart_total": total,
             "cart_total_label": _money_label(total),
             "cdek_quote": quote,
@@ -820,6 +1001,16 @@ def _delivery_page_context(request, cart_context, *, order=None, quote=None, del
 
 def _create_order_from_cart(request, cart_context, delivery_info, checkout_data, delivery_type, payment_method):
     with transaction.atomic():
+        promo = cart_context.get("promo")
+        discount_amount = Decimal("0.00")
+
+        if promo is not None:
+            promo = PromoCode.objects.select_for_update().get(pk=promo.pk)
+            reason = promo.get_unavailable_reason(cart_context["cart_subtotal"])
+            if reason:
+                raise ValueError(reason)
+            discount_amount = promo.calculate_discount(cart_context["cart_subtotal"])
+
         order = Order.objects.create(
             customer=request.user,
             delivery_address=_build_delivery_address(checkout_data),
@@ -827,6 +1018,8 @@ def _create_order_from_cart(request, cart_context, delivery_info, checkout_data,
             payment_method=payment_method or "yookassa_card",
             payment_status="pending",
             delivery_price=delivery_info["delivery_sum"],
+            promo_code=promo,
+            discount_amount=discount_amount,
             cdek_city_code=checkout_data.get("cdek_city_code") or None,
             cdek_tariff_code=delivery_info.get("tariff_code"),
             cdek_delivery_period_min=delivery_info.get("period_min"),
@@ -850,12 +1043,16 @@ def _create_order_from_cart(request, cart_context, delivery_info, checkout_data,
                 unit_price=item["price"],
             )
 
+        if promo is not None and discount_amount > Decimal("0.00"):
+            promo.used_count += 1
+            promo.save(update_fields=["used_count", "updated_at"])
+
         order.recalculate_total()
 
     return order
 
 
-@login_required
+@customer_required
 def checkout(request):
     context = _cart_context(request)
     checkout_data = request.session.get(CHECKOUT_SESSION_KEY, {})
@@ -865,6 +1062,9 @@ def checkout(request):
         if not context["cart_items"]:
             messages.error(request, "Нельзя оформить пустую корзину.")
             return redirect("cart")
+
+        if _handle_promo_action(request, context["cart_subtotal"]):
+            return redirect("checkout")
 
         checkout_data = _post_data_to_checkout_session(request.POST)
         if not _checkout_data_is_complete(checkout_data):
@@ -879,7 +1079,7 @@ def checkout(request):
     return render(request, "pages/checkout.html", context)
 
 
-@login_required
+@customer_required
 def checkout_delivery(request):
     cart_context = _cart_context(request)
     checkout_data = request.session.get(CHECKOUT_SESSION_KEY, {})
@@ -901,6 +1101,7 @@ def checkout_delivery(request):
 
         try:
             delivery_info = _calculate_cdek_delivery(cart_context, delivery_type, cdek_city_code)
+            delivery_info = _apply_shop_delivery_rules(cart_context, delivery_info)
         except ValueError as error:
             messages.error(request, str(error))
             return render(
@@ -920,6 +1121,9 @@ def checkout_delivery(request):
             "delivery_type": delivery_type,
             "cdek_city_code": str(cdek_city_code),
             "delivery_sum": delivery_info["delivery_sum"],
+            "original_delivery_sum": delivery_info.get("original_delivery_sum", delivery_info["delivery_sum"]),
+            "free_delivery_from": delivery_info.get("free_delivery_from"),
+            "free_delivery_applied": delivery_info.get("free_delivery_applied", False),
             "period_min": delivery_info.get("period_min"),
             "period_max": delivery_info.get("period_max"),
             "tariff_code": delivery_info.get("tariff_code"),
@@ -972,6 +1176,7 @@ def checkout_delivery(request):
         request.session[CART_SESSION_KEY] = {}
         request.session.pop(CHECKOUT_SESSION_KEY, None)
         request.session.pop(CDEK_QUOTE_SESSION_KEY, None)
+        request.session.pop(PROMO_SESSION_KEY, None)
         request.session.modified = True
 
         if _payment_requires_yookassa(delivery_input["payment_method"]):
@@ -991,6 +1196,8 @@ def checkout_delivery(request):
                     "yookassa_error",
                 ])
 
+                notify_order_created(order)
+
                 if order.yookassa_confirmation_url:
                     return redirect(order.yookassa_confirmation_url)
 
@@ -999,9 +1206,11 @@ def checkout_delivery(request):
                 order.yookassa_payment_status = "error"
                 order.yookassa_error = str(error)
                 order.save(update_fields=["yookassa_payment_status", "yookassa_error"])
+                notify_order_created(order)
                 messages.warning(request, "Заказ создан, но платёж ЮKassa не был сформирован. Проверьте настройки оплаты.")
                 return redirect("checkout_payment", order_number=order.order_number)
 
+        notify_order_created(order)
         order_items_total = sum(item.subtotal for item in order.items.all())
         order_items_count = sum(item.quantity for item in order.items.all())
         success_context = _delivery_page_context(request, cart_context, order=order, quote=quote, delivery_input=delivery_input)
@@ -1011,6 +1220,12 @@ def checkout_delivery(request):
             "cart_subtotal_label": _money_label(order_items_total),
             "cart_shipping": order.delivery_price,
             "cart_shipping_label": _money_label(order.delivery_price),
+            "promo": order.promo_code,
+            "promo_code": order.promo_code.code if order.promo_code else "",
+            "promo_discount": order.discount_amount,
+            "promo_discount_label": _money_label(order.discount_amount),
+            "cart_subtotal_after_discount": max(order_items_total - order.discount_amount, Decimal("0.00")),
+            "cart_subtotal_after_discount_label": _money_label(max(order_items_total - order.discount_amount, Decimal("0.00"))),
             "cart_total": order.total_amount,
             "cart_total_label": _money_label(order.total_amount),
         })
@@ -1031,7 +1246,7 @@ def checkout_payment(request, order_number):
         "items__product_variant__color",
     )
 
-    if not request.user.is_staff:
+    if not getattr(request.user, "can_manage_shop", False):
         orders = orders.filter(customer=request.user)
 
     order = get_object_or_404(orders, order_number=order_number)
@@ -1075,6 +1290,7 @@ def checkout_payment(request, order_number):
         "order_items": order_items,
         "items_total": items_total,
         "items_total_label": _money_label(items_total),
+        "discount_label": _money_label(order.discount_amount),
         "delivery_price_label": _money_label(order.delivery_price),
         "total_label": _money_label(order.total_amount),
         "yookassa_demo_mode": settings.YOOKASSA_DEMO_MODE,
@@ -1082,7 +1298,7 @@ def checkout_payment(request, order_number):
     })
 
 
-@login_required
+@customer_required
 def return_create(request, order_item_id):
     order_items = OrderItem.objects.select_related(
         "order",
@@ -1092,7 +1308,7 @@ def return_create(request, order_item_id):
         "product_variant__color",
     )
 
-    if not request.user.is_staff:
+    if not getattr(request.user, "can_manage_shop", False):
         order_items = order_items.filter(order__customer=request.user)
 
     order_item = get_object_or_404(order_items, pk=order_item_id)
@@ -1103,7 +1319,13 @@ def return_create(request, order_item_id):
         return redirect("return_detail", return_id=existing_return.id)
 
     if not order_item.can_create_return:
-        messages.error(request, "Возврат доступен только для оплаченных заказов без ранее созданной заявки по выбранному товару.")
+        if order_item.return_period_expired:
+            messages.error(
+                request,
+                f"Срок возврата истёк. По настройкам магазина возврат доступен {order_item.order.return_period_days} дней, до {order_item.order.return_deadline_label}.",
+            )
+        else:
+            messages.error(request, "Возврат доступен только для оплаченных заказов без ранее созданной заявки по выбранному товару.")
         return redirect("users:profile")
 
     if request.method == "POST":
@@ -1114,8 +1336,9 @@ def return_create(request, order_item_id):
             return_request.order_item = order_item
             return_request.refund_amount = order_item.subtotal
             return_request.save()
+            notify_return_request_created(return_request)
 
-            messages.success(request, "Заявка на возврат создана и передана на рассмотрение менеджеру.")
+            messages.success(request, "Заявка на возврат создана и передана на рассмотрение менеджеру. Подтверждение отправлено на email.")
             return redirect("return_detail", return_id=return_request.id)
     else:
         form = ReturnRequestForm()
@@ -1125,6 +1348,8 @@ def return_create(request, order_item_id):
         "order_item": order_item,
         "order": order_item.order,
         "refund_amount_label": _money_label(order_item.subtotal),
+        "return_period_days": order_item.order.return_period_days,
+        "return_deadline_label": order_item.order.return_deadline_label,
     })
 
 
@@ -1139,7 +1364,7 @@ def return_detail(request, return_id):
         "order_item__product_variant__color",
     )
 
-    if not request.user.is_staff:
+    if not getattr(request.user, "can_manage_shop", False):
         return_requests = return_requests.filter(order_item__order__customer=request.user)
 
     return_request = get_object_or_404(return_requests, pk=return_id)
@@ -1149,4 +1374,6 @@ def return_detail(request, return_id):
         "order_item": return_request.order_item,
         "order": return_request.order_item.order,
         "refund_amount_label": _money_label(return_request.refund_amount or return_request.order_item.subtotal),
+        "return_period_days": return_request.order_item.order.return_period_days,
+        "return_deadline_label": return_request.order_item.order.return_deadline_label,
     })

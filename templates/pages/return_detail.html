@@ -56,6 +56,10 @@
                     <dd><a href="{{ return_request.photo.url }}" target="_blank" rel="noopener">Открыть файл</a></dd>
                 </div>
             {% endif %}
+            <div>
+                <dt>Срок подачи возврата</dt>
+                <dd>{{ return_period_days }} дней, до {{ return_deadline_label }}</dd>
+            </div>
             {% if return_request.resolved_at %}
                 <div>
                     <dt>Завершено</dt>

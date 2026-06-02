@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}Возврат по заказу {{ order.order_number }} — панель менеджера{% endblock %}
+
+{% block content %}
+<main class="profile-page staff-page">
+    <section class="profile-hero">
+        <div>
+            <p class="profile-kicker">Возврат</p>
+            <h1>{{ order.order_number }}</h1>
+            <p>{{ order.customer.full_name|default:order.customer.username }} · заявка от {{ return_request.created_at|date:"d.m.Y H:i" }}</p>
+        </div>
+
+        <div class="profile-status-card">
+            <span>Статус заявки</span>
+            <strong>{{ return_request.get_status_display }}</strong>
+            <small>Состояние товара: {{ return_request.get_condition_display }}</small>
+        </div>
+    </section>
+
+    {% if messages %}
+        <div class="profile-messages">
+            {% for message in messages %}
+                <p class="profile-message profile-message--{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    <section class="profile-layout">
+        <aside class="profile-sidebar">
+            <a href="{% url 'users:staff_dashboard' %}">Сводка</a>
+            <a href="{% url 'users:staff_orders' %}">Заказы</a>
+            <a href="{% url 'users:staff_returns' %}" class="staff-active">Возвраты</a>
+            <a href="{% url 'admin:catalog_product_changelist' %}">Каталог</a>
+            {% if user.can_manage_users %}
+                <a href="{% url 'admin:users_customuser_changelist' %}">Пользователи</a>
+                <a href="{% url 'admin:main_shopsettings_changelist' %}">Настройки магазина</a>
+            {% endif %}
+            <a href="{% url 'admin:index' %}">Django Admin</a>
+            <form method="post" action="{% url 'users:logout' %}">
+                {% csrf_token %}
+                <button type="submit">Выйти</button>
+            </form>
+        </aside>
+
+        <div class="profile-main">
+            <section class="profile-card">
+                <div class="profile-section-head">
+                    <div>
+                        <p>Решение менеджера</p>
+                        <h2>Обработка возврата</h2>
+                    </div>
+                    <a href="{% url 'users:staff_returns' %}">← Все возвраты</a>
+                </div>
+
+                <form method="post" class="staff-return-detail-actions">
+                    {% csrf_token %}
+                    <label>
+                        Сумма возврата
+                        <input type="number" name="refund_amount" step="0.01" min="0" value="{{ refund_amount }}">
+                    </label>
+                    <div>
+                        <button type="submit" name="action" value="approve">Одобрить</button>
+                        <button type="submit" name="action" value="complete">Завершить</button>
+                        <button type="submit" name="action" value="reject" class="staff-danger-button">Отклонить</button>
+                    </div>
+                    <small>При завершении возврата товар автоматически вернётся на склад только если состояние указано как «Новый».</small>
+                </form>
+            </section>
+
+            <section class="profile-card">
+                <div class="profile-section-head">
+                    <div>
+                        <p>Товар</p>
+                        <h2>Позиция заказа</h2>
+                    </div>
+                    <a href="{% url 'users:staff_order_detail' order.id %}">Открыть заказ</a>
+                </div>
+
+                <article class="profile-order-card staff-list-card">
+                    <div class="profile-order-top">
+                        <div>
+                            <h3>{{ order_item.product_variant.product.name }}</h3>
+                            <p>{{ order_item.product_variant.color.name }} · {{ order_item.product_variant.size }}</p>
+                        </div>
+                        <div>
+                            <strong>{{ order_item.subtotal }} ₽</strong>
+                            <span>{{ order_item.quantity }} шт.</span>
+                        </div>
+                    </div>
+                    <div class="profile-order-meta">
+                        <span>Цена: {{ order_item.unit_price }} ₽</span>
+                        <span>На складе сейчас: {{ order_item.product_variant.quantity }} шт.</span>
+                        <span>Статус заказа: {{ order.get_status_display }}</span>
+                    </div>
+                </article>
+            </section>
+
+            <section class="profile-card">
+                <div class="profile-section-head">
+                    <div>
+                        <p>Заявка покупателя</p>
+                        <h2>Причина возврата</h2>
+                    </div>
+                    <span class="staff-status staff-status--return-{{ return_request.status }}">{{ return_request.get_status_display }}</span>
+                </div>
+
+                <div class="staff-return-note">
+                    <p>{{ return_request.reason|linebreaksbr }}</p>
+                </div>
+
+                {% if return_request.photo %}
+                    <div class="staff-return-photo">
+                        <img src="{{ return_request.photo.url }}" alt="Фото товара по возврату">
+                    </div>
+                {% endif %}
+
+                <dl class="staff-detail-list">
+                    <div>
+                        <dt>Покупатель</dt>
+                        <dd>{{ order.customer.full_name|default:order.customer.username }} · {{ order.customer.email }} · {{ order.customer.phone }}</dd>
+                    </div>
+                    <div>
+                        <dt>Заказ</dt>
+                        <dd>{{ order.order_number }} от {{ order.created_at|date:"d.m.Y H:i" }}</dd>
+                    </div>
+                    <div>
+                        <dt>Состояние</dt>
+                        <dd>{{ return_request.get_condition_display }}</dd>
+                    </div>
+                    <div>
+                        <dt>Сумма возврата</dt>
+                        <dd>{{ return_request.refund_amount|default:order_item.subtotal }} ₽</dd>
+                    </div>
+                    <div>
+                        <dt>Дата решения</dt>
+                        <dd>{{ return_request.resolved_at|date:"d.m.Y H:i"|default:"ещё не решено" }}</dd>
+                    </div>
+                </dl>
+            </section>
+        </div>
+    </section>
+</main>
+{% endblock %}

@@ -5,6 +5,14 @@
 {% block content %}
 <main class="cart-page">
     <section class="cart-items-zone" aria-label="Корзина">
+        {% if messages %}
+            <div class="checkout-messages cart-messages">
+                {% for message in messages %}
+                    <div class="checkout-message checkout-message-{{ message.tags }}">{{ message }}</div>
+                {% endfor %}
+            </div>
+        {% endif %}
+
         <div class="cart-tabs">
             <strong>Корзина</strong>
         </div>
@@ -78,6 +86,12 @@
                 <dt>Доставка</dt>
                 <dd>{% if cart_items %}на следующем шаге{% else %}—{% endif %}</dd>
             </div>
+            {% if promo %}
+                <div>
+                    <dt>Промокод {{ promo.code }}</dt>
+                    <dd>−{{ promo_discount_label }}</dd>
+                </div>
+            {% endif %}
         </dl>
 
         <div class="summary-total">

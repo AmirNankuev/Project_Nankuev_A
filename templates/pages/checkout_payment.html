@@ -31,6 +31,7 @@
                 Статус заказа: {{ order.get_status_display }}<br>
                 Статус оплаты: {{ order.get_payment_status_display }}<br>
                 Метод оплаты: {{ order.get_payment_method_display }}
+                {% if order.promo_code %}<br>Промокод: {{ order.promo_code.code }}{% endif %}
             </p>
         </div>
 
@@ -108,6 +109,12 @@
                 <dt>Товары</dt>
                 <dd>{{ items_total_label }}</dd>
             </div>
+            {% if order.discount_amount %}
+                <div>
+                    <dt>Скидка{% if order.promo_code %} {{ order.promo_code.code }}{% endif %}</dt>
+                    <dd>−{{ discount_label }}</dd>
+                </div>
+            {% endif %}
             <div>
                 <dt>Доставка</dt>
                 <dd>{{ delivery_price_label }}</dd>
