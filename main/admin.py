@@ -29,7 +29,10 @@ class OrderAdmin(admin.ModelAdmin):
         "customer",
         "status",
         "payment_status",
+        "yookassa_payment_status",
         "total_amount",
+        "delivery_price",
+        "cdek_status",
         "created_at",
     )
     list_display_links = ("id", "order_number")
@@ -38,9 +41,12 @@ class OrderAdmin(admin.ModelAdmin):
         "customer__username",
         "customer__email",
         "delivery_address",
+        "tracking_number",
+        "cdek_uuid",
+        "yookassa_payment_id",
     )
-    list_filter = ("status", "payment_status", "delivery_type", "payment_method", "created_at")
-    readonly_fields = ("order_number", "customer", "total_amount", "created_at", "updated_at")
+    list_filter = ("status", "payment_status", "yookassa_payment_status", "delivery_type", "payment_method", "cdek_status", "created_at")
+    readonly_fields = ("order_number", "customer", "total_amount", "cdek_response", "cdek_error", "yookassa_response", "yookassa_error", "created_at", "updated_at")
     inlines = (OrderItemInline,)
     ordering = ("-created_at",)
     fieldsets = (
@@ -48,7 +54,28 @@ class OrderAdmin(admin.ModelAdmin):
             "fields": ("order_number", "customer", "status", "total_amount"),
         }),
         ("Доставка и оплата", {
-            "fields": ("delivery_address", "delivery_type", "payment_method", "payment_status", "tracking_number"),
+            "fields": ("delivery_address", "delivery_type", "delivery_price", "payment_method", "payment_status", "tracking_number"),
+        }),
+        ("ЮKassa", {
+            "fields": (
+                "yookassa_payment_id",
+                "yookassa_payment_status",
+                "yookassa_confirmation_url",
+                "yookassa_error",
+                "yookassa_response",
+            ),
+        }),
+        ("СДЭК", {
+            "fields": (
+                "cdek_city_code",
+                "cdek_tariff_code",
+                "cdek_delivery_period_min",
+                "cdek_delivery_period_max",
+                "cdek_uuid",
+                "cdek_status",
+                "cdek_error",
+                "cdek_response",
+            ),
         }),
         ("Служебные данные", {
             "fields": ("created_at", "updated_at"),

@@ -68,9 +68,13 @@ class Order(models.Model):
         ("courier", "Курьер"),
         ("pickup", "Самовывоз"),
         ("post", "Почта"),
+        ("cdek_courier", "СДЭК курьером"),
+        ("cdek_pickup", "СДЭК пункт выдачи"),
     ]
 
     PAYMENT_METHOD_CHOICES = [
+        ("yookassa_card", "ЮKassa — банковская карта"),
+        ("yookassa_sbp", "ЮKassa — СБП"),
         ("card_online", "Карта онлайн"),
         ("cash_on_delivery", "Оплата при получении"),
         ("sbp", "СБП"),
@@ -135,6 +139,94 @@ class Order(models.Model):
         blank=True,
         null=True,
     )
+    delivery_price = models.DecimalField(
+        "Стоимость доставки",
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        validators=[
+            MinValueValidator(Decimal("0.00")),
+        ],
+    )
+    cdek_city_code = models.PositiveIntegerField(
+        "Код города СДЭК",
+        blank=True,
+        null=True,
+    )
+    cdek_tariff_code = models.PositiveIntegerField(
+        "Код тарифа СДЭК",
+        blank=True,
+        null=True,
+    )
+    cdek_delivery_period_min = models.PositiveIntegerField(
+        "Минимальный срок доставки СДЭК, дней",
+        blank=True,
+        null=True,
+    )
+    cdek_delivery_period_max = models.PositiveIntegerField(
+        "Максимальный срок доставки СДЭК, дней",
+        blank=True,
+        null=True,
+    )
+    cdek_uuid = models.CharField(
+        "UUID заказа в СДЭК",
+        max_length=100,
+        blank=True,
+        null=True,
+    )
+    cdek_status = models.CharField(
+        "Статус интеграции СДЭК",
+        max_length=30,
+        default="not_sent",
+        choices=[
+            ("not_sent", "Не отправлен"),
+            ("created", "Создан в СДЭК"),
+            ("error", "Ошибка СДЭК"),
+            ("demo", "Демо-режим"),
+        ],
+    )
+    cdek_error = models.TextField(
+        "Ошибка СДЭК",
+        blank=True,
+    )
+    cdek_response = models.JSONField(
+        "Ответ СДЭК",
+        blank=True,
+        null=True,
+    )
+    yookassa_payment_id = models.CharField(
+        "ID платежа ЮKassa",
+        max_length=120,
+        blank=True,
+        null=True,
+    )
+    yookassa_payment_status = models.CharField(
+        "Статус платежа ЮKassa",
+        max_length=40,
+        default="not_created",
+        choices=[
+            ("not_created", "Не создан"),
+            ("pending", "Ожидает оплаты"),
+            ("waiting_for_capture", "Ожидает подтверждения"),
+            ("succeeded", "Успешно оплачен"),
+            ("canceled", "Отменён"),
+            ("error", "Ошибка ЮKassa"),
+        ],
+    )
+    yookassa_confirmation_url = models.URLField(
+        "Ссылка на оплату ЮKassa",
+        max_length=1000,
+        blank=True,
+    )
+    yookassa_error = models.TextField(
+        "Ошибка ЮKassa",
+        blank=True,
+    )
+    yookassa_response = models.JSONField(
+        "Ответ ЮKassa",
+        blank=True,
+        null=True,
+    )
     created_at = models.DateTimeField(
         "Дата создания",
         auto_now_add=True,
@@ -155,8 +247,8 @@ class Order(models.Model):
         ]
 
     def recalculate_total(self):
-        total = sum(item.subtotal for item in self.items.all())
-        self.total_amount = total
+        items_total = sum(item.subtotal for item in self.items.all())
+        self.total_amount = items_total + (self.delivery_price or Decimal("0.00"))
         self.save(update_fields=["total_amount"])
 
     def __str__(self):

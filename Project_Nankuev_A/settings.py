@@ -10,10 +10,19 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+
+def env_bool(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 # Quick-start development settings - unsuitable for production
@@ -137,3 +146,30 @@ AUTH_USER_MODEL = "users.CustomUser"
 LOGIN_URL = "users:login"
 LOGIN_REDIRECT_URL = "home"
 LOGOUT_REDIRECT_URL = "home"
+
+# CDEK integration settings
+# Для реального API задайте CDEK_DEMO_MODE=false и укажите CDEK_CLIENT_ID / CDEK_CLIENT_SECRET.
+CDEK_DEMO_MODE = env_bool("CDEK_DEMO_MODE", True)
+CDEK_BASE_URL = os.getenv("CDEK_BASE_URL", "https://api.edu.cdek.ru/v2")
+CDEK_CLIENT_ID = os.getenv("CDEK_CLIENT_ID", "")
+CDEK_CLIENT_SECRET = os.getenv("CDEK_CLIENT_SECRET", "")
+CDEK_FROM_CITY_CODE = int(os.getenv("CDEK_FROM_CITY_CODE", "44"))
+CDEK_DEFAULT_TARIFF_CODE = int(os.getenv("CDEK_DEFAULT_TARIFF_CODE", "137"))
+CDEK_DEFAULT_WEIGHT_GRAMS = int(os.getenv("CDEK_DEFAULT_WEIGHT_GRAMS", "300"))
+CDEK_DEFAULT_PACKAGE_LENGTH_CM = int(os.getenv("CDEK_DEFAULT_PACKAGE_LENGTH_CM", "30"))
+CDEK_DEFAULT_PACKAGE_WIDTH_CM = int(os.getenv("CDEK_DEFAULT_PACKAGE_WIDTH_CM", "20"))
+CDEK_DEFAULT_PACKAGE_HEIGHT_CM = int(os.getenv("CDEK_DEFAULT_PACKAGE_HEIGHT_CM", "10"))
+CDEK_REQUEST_TIMEOUT = int(os.getenv("CDEK_REQUEST_TIMEOUT", "20"))
+
+
+# YooKassa integration settings
+# Для тестовой ЮKassa задайте YOOKASSA_DEMO_MODE=false и укажите тестовые Shop ID / Secret Key из кабинета ЮKassa.
+YOOKASSA_DEMO_MODE = env_bool("YOOKASSA_DEMO_MODE", True)
+YOOKASSA_API_URL = os.getenv("YOOKASSA_API_URL", "https://api.yookassa.ru/v3")
+YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "")
+YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY", "")
+YOOKASSA_RETURN_BASE_URL = os.getenv("YOOKASSA_RETURN_BASE_URL", "http://127.0.0.1:8000")
+YOOKASSA_CURRENCY = os.getenv("YOOKASSA_CURRENCY", "RUB")
+YOOKASSA_CAPTURE = env_bool("YOOKASSA_CAPTURE", True)
+YOOKASSA_REQUEST_TIMEOUT = int(os.getenv("YOOKASSA_REQUEST_TIMEOUT", "20"))
+

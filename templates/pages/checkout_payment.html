@@ -1,0 +1,122 @@
+{% extends 'base.html' %}
+
+{% block title %}Оплата заказа — интернет-магазин одежды{% endblock %}
+
+{% block header %}{% endblock %}
+
+{% block content %}
+<main class="checkout-page payment-page">
+    <a href="{% url 'catalog:product_list' %}" class="checkout-back" aria-label="Вернуться в каталог">←</a>
+
+    <section class="checkout-form-zone" aria-label="Оплата заказа">
+        <h1>Оплата</h1>
+
+        <div class="checkout-steps" aria-label="Этапы оформления заказа">
+            <span>Данные</span>
+            <span>Доставка</span>
+            <strong>Оплата</strong>
+        </div>
+
+        {% if messages %}
+            <div class="checkout-messages">
+                {% for message in messages %}
+                    <div class="checkout-message checkout-message-{{ message.tags }}">{{ message }}</div>
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        <div class="checkout-summary-note payment-summary-card">
+            <h2>Заказ №{{ order.order_number }}</h2>
+            <p>
+                Статус заказа: {{ order.get_status_display }}<br>
+                Статус оплаты: {{ order.get_payment_status_display }}<br>
+                Метод оплаты: {{ order.get_payment_method_display }}
+            </p>
+        </div>
+
+        {% if order.payment_status == 'paid' %}
+            <div class="checkout-success">
+                Оплата прошла успешно. Заказ переведён в статус «Оплачен».
+            </div>
+            <a href="{% url 'users:profile' %}" class="checkout-link-button">Перейти в личный кабинет</a>
+            <a href="{% url 'catalog:product_list' %}" class="checkout-link-button">Вернуться в каталог</a>
+        {% else %}
+            {% if order.yookassa_error %}
+                <div class="checkout-message checkout-message-warning">
+                    Ошибка ЮKassa: {{ order.yookassa_error }}
+                </div>
+            {% endif %}
+
+            {% if order.yookassa_payment_id %}
+                <div class="payment-status-card">
+                    <strong>ID платежа ЮKassa</strong>
+                    <span>{{ order.yookassa_payment_id }}</span>
+                    <small>Статус ЮKassa: {{ order.get_yookassa_payment_status_display }}</small>
+                </div>
+            {% endif %}
+
+            {% if can_demo_pay %}
+                <form method="post" class="checkout-form payment-action-form">
+                    {% csrf_token %}
+                    <p class="checkout-hint">
+                        Демо-режим включён. Нажатие кнопки ниже имитирует успешную оплату без обращения к внешнему API.
+                    </p>
+                    <button type="submit" name="action" value="demo_success">Оплатить тестово <span>→</span></button>
+                </form>
+            {% elif order.yookassa_confirmation_url %}
+                <a href="{{ order.yookassa_confirmation_url }}" class="checkout-link-button payment-main-link">Перейти к оплате ЮKassa</a>
+                <form method="post" class="checkout-form payment-action-form">
+                    {% csrf_token %}
+                    <button type="submit" name="action" value="check">Проверить статус <span>→</span></button>
+                </form>
+            {% else %}
+                <div class="checkout-message checkout-message-warning">
+                    Ссылка на оплату не сформирована. Проверьте настройки ЮKassa в переменных окружения и заказ в админке.
+                </div>
+            {% endif %}
+        {% endif %}
+    </section>
+
+    <aside class="checkout-order" aria-label="Ваш заказ">
+        <span class="checkout-count">({{ order_items|length }})</span>
+        <h2>Ваш заказ</h2>
+
+        {% if order_items %}
+            <div class="checkout-order-list">
+                {% for item in order_items %}
+                    <article class="checkout-order-item payment-order-item">
+                        <div class="checkout-order-image">
+                            <div class="image-placeholder">Товар</div>
+                        </div>
+
+                        <div>
+                            <h3>{{ item.product_variant.product.name }}</h3>
+                            <p>{{ item.product_variant.color.name }}/{{ item.product_variant.size }}</p>
+                            <small>({{ item.quantity }})</small>
+                        </div>
+
+                        <strong>{{ item.subtotal }} ₽</strong>
+                    </article>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p class="checkout-empty">В заказе нет товаров.</p>
+        {% endif %}
+
+        <dl class="checkout-totals">
+            <div>
+                <dt>Товары</dt>
+                <dd>{{ items_total_label }}</dd>
+            </div>
+            <div>
+                <dt>Доставка</dt>
+                <dd>{{ delivery_price_label }}</dd>
+            </div>
+            <div>
+                <dt>Итого к оплате</dt>
+                <dd>{{ total_label }}</dd>
+            </div>
+        </dl>
+    </aside>
+</main>
+{% endblock %}

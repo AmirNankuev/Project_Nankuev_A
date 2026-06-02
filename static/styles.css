@@ -3110,3 +3110,154 @@ body.burger-open {
         position: static;
     }
 }
+
+.checkout-hint {
+    margin: -6px 0 14px;
+    color: #555555;
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.checkout-messages {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 18px;
+}
+
+.checkout-message {
+    border: 1px solid #d4d4d1;
+    padding: 12px 14px;
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.checkout-message-error {
+    border-color: #9c1c1c;
+    color: #9c1c1c;
+}
+
+.checkout-message-warning {
+    border-color: #7a5b00;
+    color: #7a5b00;
+}
+
+.checkout-summary-note {
+    margin-bottom: 24px;
+    border: 1px solid #d4d4d1;
+    padding: 16px 18px;
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.checkout-summary-note h2 {
+    margin: 0 0 10px;
+    font-size: 14px;
+    font-weight: 900;
+    text-transform: uppercase;
+}
+
+.checkout-summary-note p {
+    margin: 0 0 10px;
+    color: #555555;
+}
+
+.checkout-summary-note a {
+    font-weight: 900;
+    text-decoration: underline;
+}
+
+.delivery-quote {
+    display: grid;
+    gap: 6px;
+    margin: 4px 0 18px;
+    border: 1px solid #171717;
+    padding: 14px 16px;
+    font-size: 13px;
+}
+
+.delivery-quote strong {
+    font-size: 22px;
+    font-weight: 950;
+}
+
+.delivery-quote span,
+.delivery-quote small {
+    color: #555555;
+}
+
+.checkout-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+}
+
+.checkout-form .checkout-actions button {
+    margin-top: 0;
+    max-width: none;
+    width: fit-content;
+    min-width: 210px;
+}
+
+.checkout-form .checkout-secondary-action {
+    border-color: #8c8c88;
+    color: #555555;
+}
+
+.checkout-link-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 46px;
+    padding: 0 20px;
+    border: 1px solid #171717;
+    font-size: 13px;
+    font-weight: 900;
+    text-transform: uppercase;
+}
+
+.payment-page .checkout-link-button {
+    margin: 0 10px 10px 0;
+}
+
+.payment-summary-card {
+    background: rgba(255, 255, 255, 0.45);
+}
+
+.payment-status-card {
+    display: grid;
+    gap: 6px;
+    margin: 0 0 18px;
+    border: 1px solid #171717;
+    padding: 14px 16px;
+    font-size: 13px;
+}
+
+.payment-status-card strong {
+    font-size: 14px;
+    font-weight: 950;
+    text-transform: uppercase;
+}
+
+.payment-status-card span {
+    word-break: break-all;
+    color: #555555;
+}
+
+.payment-status-card small {
+    color: #555555;
+}
+
+.payment-action-form {
+    margin-top: 18px;
+}
+
+.payment-main-link {
+    margin-bottom: 18px;
+}
+
+.payment-order-item .checkout-order-image {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}

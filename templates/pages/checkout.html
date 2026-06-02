@@ -17,9 +17,11 @@
             <span>Оплата</span>
         </div>
 
-        {% if order_submitted and created_order %}
-            <div class="checkout-success">
-                Заказ №{{ created_order.order_number }} создан. Он уже доступен в админке в разделе «Main → Заказы».
+        {% if messages %}
+            <div class="checkout-messages">
+                {% for message in messages %}
+                    <div class="checkout-message checkout-message-{{ message.tags }}">{{ message }}</div>
+                {% endfor %}
             </div>
         {% endif %}
 
@@ -27,34 +29,35 @@
             {% csrf_token %}
 
             <h2>Контактные данные</h2>
-            <input type="email" name="email" placeholder="Эл. почта" required>
-            <input type="tel" name="phone" placeholder="Телефон" required>
+            <input type="email" name="email" placeholder="Эл. почта" value="{{ checkout_data.email|default:'' }}" required>
+            <input type="tel" name="phone" placeholder="Телефон" value="{{ checkout_data.phone|default:'' }}" required>
 
             <h2>Адрес доставки</h2>
             <div class="checkout-two-cols">
-                <input type="text" name="first_name" placeholder="Имя" required>
-                <input type="text" name="last_name" placeholder="Фамилия" required>
+                <input type="text" name="first_name" placeholder="Имя" value="{{ checkout_data.first_name|default:'' }}" required>
+                <input type="text" name="last_name" placeholder="Фамилия" value="{{ checkout_data.last_name|default:'' }}" required>
             </div>
 
             <select name="country" required>
                 <option value="">Страна</option>
-                <option value="RU">Россия</option>
-                <option value="KZ">Казахстан</option>
-                <option value="BY">Беларусь</option>
+                <option value="RU" {% if checkout_data.country == 'RU' %}selected{% endif %}>Россия</option>
+                <option value="KZ" {% if checkout_data.country == 'KZ' %}selected{% endif %}>Казахстан</option>
+                <option value="BY" {% if checkout_data.country == 'BY' %}selected{% endif %}>Беларусь</option>
             </select>
 
-            <input type="text" name="region" placeholder="Регион" required>
-            <input type="text" name="address" placeholder="Адрес" required>
+            <input type="text" name="region" placeholder="Регион" value="{{ checkout_data.region|default:'' }}" required>
+            <input type="text" name="address" placeholder="Адрес" value="{{ checkout_data.address|default:'' }}" required>
 
             <div class="checkout-two-cols">
-                <input type="text" name="city" placeholder="Город" required>
-                <input type="text" name="postal_code" placeholder="Индекс" required>
+                <input type="text" name="city" placeholder="Город" value="{{ checkout_data.city|default:'' }}" required>
+                <input type="text" name="postal_code" placeholder="Индекс" value="{{ checkout_data.postal_code|default:'' }}" required>
             </div>
 
-            <input type="hidden" name="delivery_type" value="courier">
-            <input type="hidden" name="payment_method" value="card_online">
+            <p class="checkout-hint">
+                На следующем шаге будет отдельная страница доставки СДЭК с расчётом стоимости и срока доставки.
+            </p>
 
-            <button type="submit">Оформить заказ <span>→</span></button>
+            <button type="submit">Перейти к доставке <span>→</span></button>
         </form>
     </section>
 
@@ -96,7 +99,7 @@
             </div>
             <div>
                 <dt>Доставка</dt>
-                <dd>Рассчитывается на следующем шаге</dd>
+                <dd>{% if cart_items %}на следующем шаге{% else %}—{% endif %}</dd>
             </div>
             <div>
                 <dt>Итого</dt>

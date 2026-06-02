@@ -19,6 +19,8 @@ urlpatterns = [
     path("cart/update/<int:variant_id>/", catalog_views.cart_update, name="cart_update"),
     path("cart/remove/<int:variant_id>/", catalog_views.cart_remove, name="cart_remove"),
     path("checkout/", catalog_views.checkout, name="checkout"),
+    path("checkout/delivery/", catalog_views.checkout_delivery, name="checkout_delivery"),
+    path("checkout/payment/<str:order_number>/", catalog_views.checkout_payment, name="checkout_payment"),
     path("users/", include("users.urls")),
 ]
 

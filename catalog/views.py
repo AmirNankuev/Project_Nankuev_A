@@ -1,6 +1,7 @@
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
@@ -9,6 +10,13 @@ from django.db.models import Q, Prefetch
 from django.shortcuts import render, get_object_or_404, redirect
 
 from main.models import Order, OrderItem
+from main.services.cdek import CdekApiError, CdekClient
+from main.services.yookassa_payment import (
+    YooKassaApiError,
+    YooKassaClient,
+    payment_is_failed,
+    payment_is_successful,
+)
 
 from .models import Product, Category, Brand, Color, ProductVariant, ProductImage
 
@@ -616,45 +624,223 @@ def cart_remove(request, variant_id):
     return redirect("cart")
 
 
-def _build_delivery_address(post_data):
+CHECKOUT_SESSION_KEY = "checkout_customer_data"
+CDEK_QUOTE_SESSION_KEY = "checkout_cdek_quote"
+ONLINE_PAYMENT_METHODS = {"yookassa_card", "yookassa_sbp", "card_online", "sbp"}
+
+
+def _build_delivery_address(data):
     country_labels = {
         "RU": "Россия",
         "KZ": "Казахстан",
         "BY": "Беларусь",
     }
 
-    country = country_labels.get(post_data.get("country", ""), post_data.get("country", ""))
+    country = country_labels.get(data.get("country", ""), data.get("country", ""))
     address_parts = [
-        f"Получатель: {post_data.get('last_name', '').strip()} {post_data.get('first_name', '').strip()}".strip(),
-        f"Телефон: {post_data.get('phone', '').strip()}",
-        f"Эл. почта: {post_data.get('email', '').strip()}",
+        f"Получатель: {data.get('last_name', '').strip()} {data.get('first_name', '').strip()}".strip(),
+        f"Телефон: {data.get('phone', '').strip()}",
+        f"Эл. почта: {data.get('email', '').strip()}",
         f"Страна: {country}",
-        f"Регион: {post_data.get('region', '').strip()}",
-        f"Город: {post_data.get('city', '').strip()}",
-        f"Адрес: {post_data.get('address', '').strip()}",
-        f"Индекс: {post_data.get('postal_code', '').strip()}",
+        f"Регион: {data.get('region', '').strip()}",
+        f"Город: {data.get('city', '').strip()}",
+        f"Адрес: {data.get('address', '').strip()}",
+        f"Индекс: {data.get('postal_code', '').strip()}",
     ]
 
     return "\n".join(part for part in address_parts if part and not part.endswith(":"))
 
 
-def _create_order_from_cart(request, cart_context):
+def _cart_weight(cart_items):
+    quantity = sum(item["quantity"] for item in cart_items)
+    return max(quantity, 1) * settings.CDEK_DEFAULT_WEIGHT_GRAMS
+
+
+def _delivery_recipient(data):
+    full_name = f"{data.get('last_name', '').strip()} {data.get('first_name', '').strip()}".strip()
+    return {
+        "name": full_name or "Покупатель",
+        "phone": data.get("phone", "").strip(),
+        "email": data.get("email", "").strip(),
+        "address": data.get("address", "").strip(),
+    }
+
+
+def _extract_cdek_uuid(cdek_payload):
+    entity = cdek_payload.get("entity") if isinstance(cdek_payload, dict) else None
+    if isinstance(entity, dict):
+        return entity.get("uuid")
+    return None
+
+
+def _payment_requires_yookassa(payment_method):
+    return payment_method in ONLINE_PAYMENT_METHODS
+
+
+def _update_order_from_yookassa_payment(order, payment_payload):
+    status = payment_payload.get("status") or "pending"
+    fields_to_update = [
+        "payment_status",
+        "yookassa_payment_status",
+        "yookassa_response",
+        "updated_at",
+    ]
+
+    order.yookassa_payment_status = status
+    order.yookassa_response = payment_payload.get("raw", payment_payload)
+
+    if payment_is_successful(payment_payload):
+        order.payment_status = "paid"
+        order.status = "paid"
+        fields_to_update.append("status")
+    elif payment_is_failed(payment_payload):
+        order.payment_status = "failed"
+
+    order.save(update_fields=fields_to_update)
+    return order
+
+
+def _post_data_to_checkout_session(post_data):
+    allowed_fields = (
+        "email",
+        "phone",
+        "first_name",
+        "last_name",
+        "country",
+        "region",
+        "city",
+        "address",
+        "postal_code",
+    )
+    return {field: post_data.get(field, "").strip() for field in allowed_fields}
+
+
+def _checkout_data_is_complete(data):
+    required_fields = (
+        "email",
+        "phone",
+        "first_name",
+        "last_name",
+        "country",
+        "region",
+        "city",
+        "address",
+        "postal_code",
+    )
+    return all(data.get(field) for field in required_fields)
+
+
+def _clear_cdek_quote(request):
+    request.session.pop(CDEK_QUOTE_SESSION_KEY, None)
+    request.session.modified = True
+
+
+def _quote_to_session_payload(delivery_info, delivery_type, cdek_city_code):
+    return {
+        "delivery_type": delivery_type,
+        "cdek_city_code": str(cdek_city_code),
+        "delivery_sum": str(delivery_info["delivery_sum"]),
+        "period_min": delivery_info.get("period_min"),
+        "period_max": delivery_info.get("period_max"),
+        "tariff_code": delivery_info.get("tariff_code"),
+    }
+
+
+def _quote_from_session(payload):
+    if not isinstance(payload, dict):
+        return None
+
+    delivery_sum = _to_decimal(payload.get("delivery_sum"))
+    if delivery_sum is None:
+        return None
+
+    return {
+        "delivery_type": payload.get("delivery_type") or "cdek_courier",
+        "cdek_city_code": payload.get("cdek_city_code") or "",
+        "delivery_sum": delivery_sum,
+        "period_min": payload.get("period_min"),
+        "period_max": payload.get("period_max"),
+        "tariff_code": payload.get("tariff_code"),
+    }
+
+
+def _delivery_input_from_request_or_session(request):
+    quote = _quote_from_session(request.session.get(CDEK_QUOTE_SESSION_KEY))
+    return {
+        "delivery_type": request.POST.get("delivery_type") or (quote or {}).get("delivery_type") or "cdek_courier",
+        "cdek_city_code": request.POST.get("cdek_city_code") or (quote or {}).get("cdek_city_code") or "",
+        "payment_method": request.POST.get("payment_method") or "yookassa_card",
+    }
+
+
+def _calculate_cdek_delivery(cart_context, delivery_type, cdek_city_code):
+    if not cdek_city_code:
+        raise ValueError("Укажите код города СДЭК.")
+
+    try:
+        city_code = int(cdek_city_code)
+    except (TypeError, ValueError):
+        raise ValueError("Код города СДЭК должен быть числом.")
+
+    cdek = CdekClient()
+    return cdek.calculate_tariff(
+        to_city_code=city_code,
+        delivery_type=delivery_type,
+        weight=_cart_weight(cart_context["cart_items"]),
+    )
+
+
+def _delivery_page_context(request, cart_context, *, order=None, quote=None, delivery_input=None):
+    context = dict(cart_context)
+    quote = quote or _quote_from_session(request.session.get(CDEK_QUOTE_SESSION_KEY))
+    delivery_input = delivery_input or _delivery_input_from_request_or_session(request)
+
+    if quote:
+        shipping = quote["delivery_sum"]
+        total = context["cart_subtotal"] + shipping
+        context.update({
+            "cart_shipping": shipping,
+            "cart_shipping_label": _money_label(shipping),
+            "cart_total": total,
+            "cart_total_label": _money_label(total),
+            "cdek_quote": quote,
+        })
+
+    context.update({
+        "checkout_data": request.session.get(CHECKOUT_SESSION_KEY, {}),
+        "delivery_input": delivery_input,
+        "cdek_demo_mode": settings.CDEK_DEMO_MODE,
+        "yookassa_demo_mode": settings.YOOKASSA_DEMO_MODE,
+        "order_submitted": bool(order),
+        "created_order": order,
+    })
+    return context
+
+
+def _create_order_from_cart(request, cart_context, delivery_info, checkout_data, delivery_type, payment_method):
     with transaction.atomic():
         order = Order.objects.create(
             customer=request.user,
-            delivery_address=_build_delivery_address(request.POST),
-            delivery_type=request.POST.get("delivery_type") or "courier",
-            payment_method=request.POST.get("payment_method") or "card_online",
+            delivery_address=_build_delivery_address(checkout_data),
+            delivery_type=delivery_type,
+            payment_method=payment_method or "yookassa_card",
             payment_status="pending",
+            delivery_price=delivery_info["delivery_sum"],
+            cdek_city_code=checkout_data.get("cdek_city_code") or None,
+            cdek_tariff_code=delivery_info.get("tariff_code"),
+            cdek_delivery_period_min=delivery_info.get("period_min"),
+            cdek_delivery_period_max=delivery_info.get("period_max"),
         )
 
         for item in cart_context["cart_items"]:
             variant = ProductVariant.objects.select_for_update().get(pk=item["variant"].pk)
             quantity = item["quantity"]
 
-            if variant.quantity and variant.quantity >= quantity:
-                variant.quantity -= quantity
-                variant.save(update_fields=["quantity"])
+            if variant.quantity < quantity:
+                raise ValueError(f"Недостаточно товара на складе: {variant}")
+
+            variant.quantity -= quantity
+            variant.save(update_fields=["quantity"])
 
             OrderItem.objects.create(
                 order=order,
@@ -663,25 +849,233 @@ def _create_order_from_cart(request, cart_context):
                 unit_price=item["price"],
             )
 
+        order.recalculate_total()
+
     return order
 
 
 @login_required
 def checkout(request):
     context = _cart_context(request)
-    context["order_submitted"] = False
-    context["created_order"] = None
+    checkout_data = request.session.get(CHECKOUT_SESSION_KEY, {})
+    context["checkout_data"] = checkout_data
 
     if request.method == "POST":
         if not context["cart_items"]:
             messages.error(request, "Нельзя оформить пустую корзину.")
             return redirect("cart")
 
-        order = _create_order_from_cart(request, context)
-        request.session[CART_SESSION_KEY] = {}
-        request.session.modified = True
+        checkout_data = _post_data_to_checkout_session(request.POST)
+        if not _checkout_data_is_complete(checkout_data):
+            messages.error(request, "Заполните контактные данные и адрес доставки.")
+            context["checkout_data"] = checkout_data
+            return render(request, "pages/checkout.html", context)
 
-        context["order_submitted"] = True
-        context["created_order"] = order
+        request.session[CHECKOUT_SESSION_KEY] = checkout_data
+        _clear_cdek_quote(request)
+        return redirect("checkout_delivery")
 
     return render(request, "pages/checkout.html", context)
+
+
+@login_required
+def checkout_delivery(request):
+    cart_context = _cart_context(request)
+    checkout_data = request.session.get(CHECKOUT_SESSION_KEY, {})
+
+    if not cart_context["cart_items"]:
+        messages.error(request, "Нельзя оформить пустую корзину.")
+        return redirect("cart")
+
+    if not _checkout_data_is_complete(checkout_data):
+        messages.error(request, "Сначала заполните контактные данные и адрес доставки.")
+        return redirect("checkout")
+
+    delivery_input = _delivery_input_from_request_or_session(request)
+
+    if request.method == "POST":
+        action = request.POST.get("action") or "calculate"
+        delivery_type = delivery_input["delivery_type"]
+        cdek_city_code = delivery_input["cdek_city_code"]
+
+        try:
+            delivery_info = _calculate_cdek_delivery(cart_context, delivery_type, cdek_city_code)
+        except ValueError as error:
+            messages.error(request, str(error))
+            return render(
+                request,
+                "pages/checkout_delivery.html",
+                _delivery_page_context(request, cart_context, delivery_input=delivery_input),
+            )
+        except CdekApiError as error:
+            messages.error(request, f"СДЭК не рассчитал доставку: {error}")
+            return render(
+                request,
+                "pages/checkout_delivery.html",
+                _delivery_page_context(request, cart_context, delivery_input=delivery_input),
+            )
+
+        quote = {
+            "delivery_type": delivery_type,
+            "cdek_city_code": str(cdek_city_code),
+            "delivery_sum": delivery_info["delivery_sum"],
+            "period_min": delivery_info.get("period_min"),
+            "period_max": delivery_info.get("period_max"),
+            "tariff_code": delivery_info.get("tariff_code"),
+        }
+        request.session[CDEK_QUOTE_SESSION_KEY] = _quote_to_session_payload(delivery_info, delivery_type, cdek_city_code)
+        request.session.modified = True
+
+        if action == "calculate":
+            messages.success(request, "Доставка СДЭК рассчитана. Проверьте сумму и подтвердите заказ.")
+            return render(
+                request,
+                "pages/checkout_delivery.html",
+                _delivery_page_context(request, cart_context, quote=quote, delivery_input=delivery_input),
+            )
+
+        try:
+            order = _create_order_from_cart(
+                request,
+                cart_context,
+                delivery_info,
+                {**checkout_data, "cdek_city_code": cdek_city_code},
+                delivery_type,
+                delivery_input["payment_method"],
+            )
+        except ValueError as error:
+            messages.error(request, str(error))
+            return redirect("cart")
+
+        cdek = CdekClient()
+        try:
+            cdek_response = cdek.create_order(
+                order=order,
+                recipient=_delivery_recipient(checkout_data),
+                to_city_code=int(cdek_city_code),
+                delivery_type=delivery_type,
+                weight=_cart_weight(cart_context["cart_items"]),
+                tariff_code=delivery_info.get("tariff_code"),
+            )
+            order.cdek_uuid = _extract_cdek_uuid(cdek_response)
+            order.cdek_status = "demo" if settings.CDEK_DEMO_MODE else "created"
+            order.cdek_response = cdek_response
+            order.cdek_error = ""
+            order.save(update_fields=["cdek_uuid", "cdek_status", "cdek_response", "cdek_error"])
+        except CdekApiError as error:
+            order.cdek_status = "error"
+            order.cdek_error = str(error)
+            order.save(update_fields=["cdek_status", "cdek_error"])
+            messages.warning(request, "Заказ создан локально, но не был отправлен в СДЭК. Проверьте заказ в админке.")
+
+        request.session[CART_SESSION_KEY] = {}
+        request.session.pop(CHECKOUT_SESSION_KEY, None)
+        request.session.pop(CDEK_QUOTE_SESSION_KEY, None)
+        request.session.modified = True
+
+        if _payment_requires_yookassa(delivery_input["payment_method"]):
+            yookassa = YooKassaClient(request)
+            try:
+                payment_payload = yookassa.create_payment(order)
+                order.yookassa_payment_id = payment_payload.get("id")
+                order.yookassa_payment_status = payment_payload.get("status") or "pending"
+                order.yookassa_confirmation_url = payment_payload.get("confirmation_url") or ""
+                order.yookassa_response = payment_payload.get("raw")
+                order.yookassa_error = ""
+                order.save(update_fields=[
+                    "yookassa_payment_id",
+                    "yookassa_payment_status",
+                    "yookassa_confirmation_url",
+                    "yookassa_response",
+                    "yookassa_error",
+                ])
+
+                if order.yookassa_confirmation_url:
+                    return redirect(order.yookassa_confirmation_url)
+
+                return redirect("checkout_payment", order_number=order.order_number)
+            except YooKassaApiError as error:
+                order.yookassa_payment_status = "error"
+                order.yookassa_error = str(error)
+                order.save(update_fields=["yookassa_payment_status", "yookassa_error"])
+                messages.warning(request, "Заказ создан, но платёж ЮKassa не был сформирован. Проверьте настройки оплаты.")
+                return redirect("checkout_payment", order_number=order.order_number)
+
+        order_items_total = sum(item.subtotal for item in order.items.all())
+        order_items_count = sum(item.quantity for item in order.items.all())
+        success_context = _delivery_page_context(request, cart_context, order=order, quote=quote, delivery_input=delivery_input)
+        success_context.update({
+            "cart_count": order_items_count,
+            "cart_subtotal": order_items_total,
+            "cart_subtotal_label": _money_label(order_items_total),
+            "cart_shipping": order.delivery_price,
+            "cart_shipping_label": _money_label(order.delivery_price),
+            "cart_total": order.total_amount,
+            "cart_total_label": _money_label(order.total_amount),
+        })
+        return render(request, "pages/checkout_delivery.html", success_context)
+
+    return render(
+        request,
+        "pages/checkout_delivery.html",
+        _delivery_page_context(request, cart_context, delivery_input=delivery_input),
+    )
+
+
+
+@login_required
+def checkout_payment(request, order_number):
+    orders = Order.objects.prefetch_related(
+        "items__product_variant__product",
+        "items__product_variant__color",
+    )
+
+    if not request.user.is_staff:
+        orders = orders.filter(customer=request.user)
+
+    order = get_object_or_404(orders, order_number=order_number)
+
+    if request.method == "POST":
+        action = request.POST.get("action")
+
+        if action == "demo_success":
+            if not settings.YOOKASSA_DEMO_MODE:
+                messages.error(request, "Демо-оплата отключена. Проверьте платёж через ЮKassa.")
+                return redirect("checkout_payment", order_number=order.order_number)
+
+            demo_payload = {
+                "id": order.yookassa_payment_id or f"demo_{order.order_number.lower()}",
+                "status": "succeeded",
+                "paid": True,
+                "demo": True,
+            }
+            _update_order_from_yookassa_payment(order, demo_payload)
+            messages.success(request, "Тестовая оплата выполнена. Заказ переведён в статус «Оплачен».")
+            return redirect("checkout_payment", order_number=order.order_number)
+
+        if action == "check":
+            return redirect("checkout_payment", order_number=order.order_number)
+
+    if order.yookassa_payment_id and order.payment_status != "paid" and not settings.YOOKASSA_DEMO_MODE:
+        yookassa = YooKassaClient(request)
+        try:
+            payment_payload = yookassa.get_payment(order.yookassa_payment_id)
+            _update_order_from_yookassa_payment(order, payment_payload)
+        except YooKassaApiError as error:
+            order.yookassa_error = str(error)
+            order.save(update_fields=["yookassa_error"])
+            messages.warning(request, f"Не удалось проверить статус платежа ЮKassa: {error}")
+
+    order_items = list(order.items.all())
+    items_total = sum(item.subtotal for item in order_items)
+
+    return render(request, "pages/checkout_payment.html", {
+        "order": order,
+        "order_items": order_items,
+        "items_total": items_total,
+        "items_total_label": _money_label(items_total),
+        "delivery_price_label": _money_label(order.delivery_price),
+        "total_label": _money_label(order.total_amount),
+        "yookassa_demo_mode": settings.YOOKASSA_DEMO_MODE,
+        "can_demo_pay": settings.YOOKASSA_DEMO_MODE and order.payment_status != "paid",
+    })

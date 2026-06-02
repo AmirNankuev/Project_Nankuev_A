@@ -1,0 +1,162 @@
+{% extends 'base.html' %}
+
+{% block title %}Доставка — интернет-магазин одежды{% endblock %}
+
+{% block header %}{% endblock %}
+
+{% block content %}
+<main class="checkout-page">
+    <a href="{% url 'checkout' %}" class="checkout-back" aria-label="Вернуться к данным заказа">←</a>
+
+    <section class="checkout-form-zone" aria-label="Доставка и оплата">
+        <h1>Доставка</h1>
+
+        <div class="checkout-steps" aria-label="Этапы оформления заказа">
+            <span>Данные</span>
+            <strong>Доставка</strong>
+            <span>Оплата</span>
+        </div>
+
+        {% if messages %}
+            <div class="checkout-messages">
+                {% for message in messages %}
+                    <div class="checkout-message checkout-message-{{ message.tags }}">{{ message }}</div>
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        {% if order_submitted and created_order %}
+            <div class="checkout-success">
+                Заказ №{{ created_order.order_number }} создан.<br>
+                Доставка СДЭК: {{ created_order.delivery_price }} ₽
+                {% if created_order.cdek_delivery_period_min and created_order.cdek_delivery_period_max %}
+                    , срок {{ created_order.cdek_delivery_period_min }}–{{ created_order.cdek_delivery_period_max }} дн.
+                {% endif %}<br>
+                {% if created_order.cdek_uuid %}
+                    UUID СДЭК: {{ created_order.cdek_uuid }}.<br>
+                {% endif %}
+                {% if created_order.payment_status == 'paid' %}
+                    Оплата: выполнена.
+                {% else %}
+                    Оплата: {{ created_order.get_payment_status_display }}.
+                {% endif %}<br>
+                Заказ доступен в админке в разделе «Main → Заказы».
+            </div>
+
+            {% if created_order.yookassa_payment_id %}
+                <a href="{% url 'checkout_payment' created_order.order_number %}" class="checkout-link-button">Открыть оплату</a>
+            {% endif %}
+            <a href="{% url 'catalog:product_list' %}" class="checkout-link-button">Вернуться в каталог</a>
+        {% else %}
+            <div class="checkout-summary-note">
+                <h2>Получатель</h2>
+                <p>
+                    {{ checkout_data.last_name }} {{ checkout_data.first_name }}<br>
+                    {{ checkout_data.phone }} · {{ checkout_data.email }}<br>
+                    {{ checkout_data.country }}, {{ checkout_data.region }}, {{ checkout_data.city }}, {{ checkout_data.address }}
+                </p>
+                <a href="{% url 'checkout' %}">Изменить данные</a>
+            </div>
+
+            <form method="post" class="checkout-form">
+                {% csrf_token %}
+
+                <h2>Доставка СДЭК</h2>
+                <select name="delivery_type" required>
+                    <option value="cdek_courier" {% if delivery_input.delivery_type == 'cdek_courier' %}selected{% endif %}>СДЭК курьером</option>
+                    <option value="cdek_pickup" {% if delivery_input.delivery_type == 'cdek_pickup' %}selected{% endif %}>СДЭК пункт выдачи</option>
+                </select>
+
+                <input type="number" name="cdek_city_code" placeholder="Код города СДЭК" min="1" value="{{ delivery_input.cdek_city_code|default:'' }}" required>
+                <p class="checkout-hint">
+                    Для учебного прототипа код города СДЭК вводится вручную.
+                    {% if cdek_demo_mode %}
+                        Сейчас включён демо-режим: стоимость считается локально без внешнего API.
+                    {% endif %}
+                </p>
+
+                {% if cdek_quote %}
+                    <div class="delivery-quote">
+                        <strong>{{ cart_shipping_label }}</strong>
+                        <span>
+                            {% if cdek_quote.period_min and cdek_quote.period_max %}
+                                Срок доставки: {{ cdek_quote.period_min }}–{{ cdek_quote.period_max }} дн.
+                            {% else %}
+                                Срок доставки будет уточнён СДЭК.
+                            {% endif %}
+                        </span>
+                        <small>Тариф СДЭК: {{ cdek_quote.tariff_code }}</small>
+                    </div>
+                {% endif %}
+
+                <h2>Оплата</h2>
+                <select name="payment_method" required>
+                    <option value="yookassa_card" {% if delivery_input.payment_method == 'yookassa_card' or delivery_input.payment_method == 'card_online' %}selected{% endif %}>ЮKassa — банковская карта</option>
+                    <option value="yookassa_sbp" {% if delivery_input.payment_method == 'yookassa_sbp' or delivery_input.payment_method == 'sbp' %}selected{% endif %}>ЮKassa — СБП</option>
+                    <option value="cash_on_delivery" {% if delivery_input.payment_method == 'cash_on_delivery' %}selected{% endif %}>Оплата при получении</option>
+                </select>
+                <p class="checkout-hint">
+                    После подтверждения заказа система создаст платёж ЮKassa и откроет страницу оплаты.
+                    {% if yookassa_demo_mode %}
+                        Сейчас включён демо-режим: вместо внешней ЮKassa будет локальная кнопка тестовой оплаты.
+                    {% endif %}
+                </p>
+
+                <div class="checkout-actions">
+                    <button type="submit" name="action" value="calculate">Рассчитать доставку <span>→</span></button>
+                    <button type="submit" name="action" value="confirm" {% if not cdek_quote %}class="checkout-secondary-action"{% endif %}>Подтвердить заказ <span>→</span></button>
+                </div>
+            </form>
+        {% endif %}
+    </section>
+
+    <aside class="checkout-order" aria-label="Ваш заказ">
+        <span class="checkout-count">({{ cart_count }})</span>
+        <h2>Ваш заказ</h2>
+
+        {% if cart_items %}
+            <div class="checkout-order-list">
+                {% for item in cart_items %}
+                    <article class="checkout-order-item">
+                        <a href="{% url 'catalog:product_detail' item.product.slug %}" class="checkout-order-image">
+                            {% if item.image_url %}
+                                <img src="{{ item.image_url }}" alt="{{ item.product.name }}">
+                            {% else %}
+                                <div class="image-placeholder">Нет изображения</div>
+                            {% endif %}
+                        </a>
+
+                        <div>
+                            <h3>{{ item.product.name }}</h3>
+                            <p>{{ item.variant.color.name }}/{{ item.variant.size }}</p>
+                            <small>({{ item.quantity }})</small>
+                        </div>
+
+                        {% if not order_submitted %}
+                            <a href="{% url 'cart' %}" class="checkout-change">Изменить</a>
+                        {% endif %}
+                        <strong>{{ item.line_total_label }}</strong>
+                    </article>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p class="checkout-empty">Корзина пуста.</p>
+        {% endif %}
+
+        <dl class="checkout-totals">
+            <div>
+                <dt>Товары</dt>
+                <dd>{{ cart_subtotal_label }}</dd>
+            </div>
+            <div>
+                <dt>Доставка</dt>
+                <dd>{% if cdek_quote or order_submitted %}{{ cart_shipping_label }}{% else %}рассчитайте СДЭК{% endif %}</dd>
+            </div>
+            <div>
+                <dt>Итого</dt>
+                <dd>{{ cart_total_label }}</dd>
+            </div>
+        </dl>
+    </aside>
+</main>
+{% endblock %}
