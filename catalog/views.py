@@ -9,7 +9,8 @@ from django.db import transaction
 from django.db.models import Q, Prefetch
 from django.shortcuts import render, get_object_or_404, redirect
 
-from main.models import Order, OrderItem
+from main.forms import ReturnRequestForm
+from main.models import Order, OrderItem, ReturnRequest
 from main.services.cdek import CdekApiError, CdekClient
 from main.services.yookassa_payment import (
     YooKassaApiError,
@@ -1078,4 +1079,74 @@ def checkout_payment(request, order_number):
         "total_label": _money_label(order.total_amount),
         "yookassa_demo_mode": settings.YOOKASSA_DEMO_MODE,
         "can_demo_pay": settings.YOOKASSA_DEMO_MODE and order.payment_status != "paid",
+    })
+
+
+@login_required
+def return_create(request, order_item_id):
+    order_items = OrderItem.objects.select_related(
+        "order",
+        "order__customer",
+        "product_variant",
+        "product_variant__product",
+        "product_variant__color",
+    )
+
+    if not request.user.is_staff:
+        order_items = order_items.filter(order__customer=request.user)
+
+    order_item = get_object_or_404(order_items, pk=order_item_id)
+
+    existing_return = getattr(order_item, "return_request", None)
+    if existing_return is not None:
+        messages.info(request, "Заявка на возврат по этой позиции уже создана.")
+        return redirect("return_detail", return_id=existing_return.id)
+
+    if not order_item.can_create_return:
+        messages.error(request, "Возврат доступен только для оплаченных заказов без ранее созданной заявки по выбранному товару.")
+        return redirect("users:profile")
+
+    if request.method == "POST":
+        form = ReturnRequestForm(request.POST, request.FILES)
+
+        if form.is_valid():
+            return_request = form.save(commit=False)
+            return_request.order_item = order_item
+            return_request.refund_amount = order_item.subtotal
+            return_request.save()
+
+            messages.success(request, "Заявка на возврат создана и передана на рассмотрение менеджеру.")
+            return redirect("return_detail", return_id=return_request.id)
+    else:
+        form = ReturnRequestForm()
+
+    return render(request, "pages/return_create.html", {
+        "form": form,
+        "order_item": order_item,
+        "order": order_item.order,
+        "refund_amount_label": _money_label(order_item.subtotal),
+    })
+
+
+@login_required
+def return_detail(request, return_id):
+    return_requests = ReturnRequest.objects.select_related(
+        "order_item",
+        "order_item__order",
+        "order_item__order__customer",
+        "order_item__product_variant",
+        "order_item__product_variant__product",
+        "order_item__product_variant__color",
+    )
+
+    if not request.user.is_staff:
+        return_requests = return_requests.filter(order_item__order__customer=request.user)
+
+    return_request = get_object_or_404(return_requests, pk=return_id)
+
+    return render(request, "pages/return_detail.html", {
+        "return_request": return_request,
+        "order_item": return_request.order_item,
+        "order": return_request.order_item.order,
+        "refund_amount_label": _money_label(return_request.refund_amount or return_request.order_item.subtotal),
     })

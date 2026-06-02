@@ -21,6 +21,8 @@ urlpatterns = [
     path("checkout/", catalog_views.checkout, name="checkout"),
     path("checkout/delivery/", catalog_views.checkout_delivery, name="checkout_delivery"),
     path("checkout/payment/<str:order_number>/", catalog_views.checkout_payment, name="checkout_payment"),
+    path("returns/create/<int:order_item_id>/", catalog_views.return_create, name="return_create"),
+    path("returns/<int:return_id>/", catalog_views.return_detail, name="return_detail"),
     path("users/", include("users.urls")),
 ]
 

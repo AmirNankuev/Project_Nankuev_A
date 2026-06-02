@@ -1,0 +1,73 @@
+{% extends 'base.html' %}
+
+{% block title %}Статус возврата — интернет-магазин одежды{% endblock %}
+
+{% block header %}{% endblock %}
+
+{% block content %}
+<main class="return-page">
+    <a href="{% url 'users:profile' %}#profile-orders" class="checkout-back" aria-label="Вернуться в личный кабинет">←</a>
+
+    <section class="return-card">
+        <div class="return-head">
+            <p>Возврат товара</p>
+            <h1>Статус заявки</h1>
+            <span>Заказ №{{ order.order_number }}</span>
+        </div>
+
+        {% if messages %}
+            <div class="checkout-messages">
+                {% for message in messages %}
+                    <div class="checkout-message checkout-message-{{ message.tags }}">{{ message }}</div>
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        <div class="return-status-box return-status-{{ return_request.status }}">
+            <span>Текущий статус</span>
+            <strong>{{ return_request.get_status_display }}</strong>
+            <small>Создано: {{ return_request.created_at|date:"d.m.Y H:i" }}</small>
+        </div>
+
+        <div class="return-product">
+            <div>
+                <strong>{{ order_item.product_variant.product.name }}</strong>
+                <span>{{ order_item.product_variant.color.name }} / {{ order_item.product_variant.size }}</span>
+                <small>{{ order_item.quantity }} × {{ order_item.unit_price }} ₽</small>
+            </div>
+            <div>
+                <span>Сумма возврата</span>
+                <strong>{{ refund_amount_label }}</strong>
+            </div>
+        </div>
+
+        <dl class="return-info-list">
+            <div>
+                <dt>Состояние товара</dt>
+                <dd>{{ return_request.get_condition_display }}</dd>
+            </div>
+            <div>
+                <dt>Причина</dt>
+                <dd>{{ return_request.reason }}</dd>
+            </div>
+            {% if return_request.photo %}
+                <div>
+                    <dt>Фото</dt>
+                    <dd><a href="{{ return_request.photo.url }}" target="_blank" rel="noopener">Открыть файл</a></dd>
+                </div>
+            {% endif %}
+            {% if return_request.resolved_at %}
+                <div>
+                    <dt>Завершено</dt>
+                    <dd>{{ return_request.resolved_at|date:"d.m.Y H:i" }}</dd>
+                </div>
+            {% endif %}
+        </dl>
+
+        <div class="return-actions-row">
+            <a href="{% url 'users:profile' %}#profile-orders" class="checkout-link-button">Вернуться в личный кабинет</a>
+            <a href="{% url 'catalog:product_list' %}" class="checkout-link-button">В каталог</a>
+        </div>
+    </section>
+</main>
+{% endblock %}

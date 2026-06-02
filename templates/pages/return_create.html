@@ -1,0 +1,63 @@
+{% extends 'base.html' %}
+
+{% block title %}Оформление возврата — интернет-магазин одежды{% endblock %}
+
+{% block header %}{% endblock %}
+
+{% block content %}
+<main class="return-page">
+    <a href="{% url 'users:profile' %}#profile-orders" class="checkout-back" aria-label="Вернуться в личный кабинет">←</a>
+
+    <section class="return-card">
+        <div class="return-head">
+            <p>Возврат товара</p>
+            <h1>Заявка на возврат</h1>
+            <span>Заказ №{{ order.order_number }}</span>
+        </div>
+
+        {% if messages %}
+            <div class="checkout-messages">
+                {% for message in messages %}
+                    <div class="checkout-message checkout-message-{{ message.tags }}">{{ message }}</div>
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        <div class="return-product">
+            <div>
+                <strong>{{ order_item.product_variant.product.name }}</strong>
+                <span>{{ order_item.product_variant.color.name }} / {{ order_item.product_variant.size }}</span>
+                <small>{{ order_item.quantity }} × {{ order_item.unit_price }} ₽</small>
+            </div>
+            <div>
+                <span>Предварительная сумма возврата</span>
+                <strong>{{ refund_amount_label }}</strong>
+            </div>
+        </div>
+
+        <form method="post" enctype="multipart/form-data" class="return-form">
+            {% csrf_token %}
+
+            {% for field in form %}
+                <label class="return-form-field">
+                    <span>{{ field.label }}</span>
+                    {{ field }}
+                    {% if field.help_text %}
+                        <small>{{ field.help_text }}</small>
+                    {% endif %}
+                    {% if field.errors %}
+                        <em>{{ field.errors|striptags }}</em>
+                    {% endif %}
+                </label>
+            {% endfor %}
+
+            <div class="return-rules">
+                <strong>Как это работает</strong>
+                <p>После отправки заявка получит статус «Запрошен». Менеджер проверит причину и состояние товара в админ-панели, затем одобрит, отклонит или завершит возврат.</p>
+            </div>
+
+            <button type="submit" class="return-submit">Отправить заявку <span>→</span></button>
+        </form>
+    </section>
+</main>
+{% endblock %}

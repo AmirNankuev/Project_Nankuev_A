@@ -1,4 +1,5 @@
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.utils import timezone
 
 from .models import CustomerProfile, Order, OrderItem, ReturnRequest, CartItem
 
@@ -92,10 +93,78 @@ class OrderItemAdmin(admin.ModelAdmin):
 
 @admin.register(ReturnRequest)
 class ReturnRequestAdmin(admin.ModelAdmin):
-    list_display = ("id", "order_item", "condition", "status", "refund_amount", "created_at")
-    search_fields = ("reason", "order_item__order__order_number")
-    list_filter = ("condition", "status")
+    list_display = (
+        "id",
+        "order_number",
+        "customer",
+        "product_name",
+        "condition",
+        "status",
+        "refund_amount",
+        "created_at",
+        "resolved_at",
+    )
+    search_fields = (
+        "reason",
+        "order_item__order__order_number",
+        "order_item__order__customer__username",
+        "order_item__order__customer__email",
+        "order_item__product_variant__product__name",
+    )
+    list_filter = ("condition", "status", "created_at")
+    readonly_fields = ("created_at", "resolved_at")
     ordering = ("-created_at",)
+    actions = ("approve_returns", "reject_returns", "complete_returns")
+
+    @admin.display(description="Заказ")
+    def order_number(self, obj):
+        return obj.order_item.order.order_number
+
+    @admin.display(description="Покупатель")
+    def customer(self, obj):
+        return obj.order_item.order.customer
+
+    @admin.display(description="Товар")
+    def product_name(self, obj):
+        return obj.order_item.product_variant.product.name
+
+    @admin.action(description="Одобрить выбранные возвраты")
+    def approve_returns(self, request, queryset):
+        updated = queryset.exclude(status__in=("completed", "rejected")).update(status="approved")
+        self.message_user(request, f"Одобрено возвратов: {updated}.", messages.SUCCESS)
+
+    @admin.action(description="Отклонить выбранные возвраты")
+    def reject_returns(self, request, queryset):
+        updated = queryset.exclude(status="completed").update(status="rejected", resolved_at=timezone.now())
+        self.message_user(request, f"Отклонено возвратов: {updated}.", messages.WARNING)
+
+    @admin.action(description="Завершить выбранные возвраты")
+    def complete_returns(self, request, queryset):
+        completed = 0
+
+        for return_request in queryset.select_related(
+            "order_item",
+            "order_item__order",
+            "order_item__product_variant",
+        ):
+            if return_request.status in ("completed", "rejected"):
+                continue
+
+            if return_request.refund_amount is None:
+                return_request.refund_amount = return_request.order_item.subtotal
+
+            return_request.status = "completed"
+            return_request.resolved_at = timezone.now()
+            return_request.save(update_fields=["status", "refund_amount", "resolved_at"])
+
+            if return_request.condition == "new":
+                variant = return_request.order_item.product_variant
+                variant.quantity += return_request.order_item.quantity
+                variant.save(update_fields=["quantity"])
+
+            completed += 1
+
+        self.message_user(request, f"Завершено возвратов: {completed}.", messages.SUCCESS)
 
 
 @admin.register(CartItem)

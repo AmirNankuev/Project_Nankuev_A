@@ -106,6 +106,16 @@
                                                 <strong>{{ product.name }}</strong>
                                                 <span>{{ item.product_variant.color.name }} / {{ item.product_variant.size }}</span>
                                                 <small>{{ item.quantity }} × {{ item.unit_price }} ₽</small>
+
+                                                <div class="profile-return-actions">
+                                                    {% if item.has_return_request %}
+                                                        <a href="{% url 'return_detail' item.return_request.id %}" class="profile-return-status">
+                                                            Возврат: {{ item.return_request.get_status_display }}
+                                                        </a>
+                                                    {% elif item.can_create_return %}
+                                                        <a href="{% url 'return_create' item.id %}" class="profile-return-button">Оформить возврат</a>
+                                                    {% endif %}
+                                                </div>
                                             </div>
                                         {% endwith %}
                                     </div>

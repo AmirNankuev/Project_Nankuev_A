@@ -307,6 +307,19 @@ class OrderItem(models.Model):
 
         self.order.recalculate_total()
 
+    @property
+    def has_return_request(self):
+        return hasattr(self, "return_request")
+
+    @property
+    def can_create_return(self):
+        allowed_order_statuses = {"paid", "processing", "assembled", "shipped", "delivered"}
+        return (
+            not self.has_return_request
+            and self.order.payment_status == "paid"
+            and self.order.status in allowed_order_statuses
+        )
+
     def __str__(self):
         return f"{self.product_variant} × {self.quantity}"
 
@@ -354,6 +367,12 @@ class ReturnRequest(models.Model):
         validators=[
             MinValueValidator(Decimal("0.00")),
         ],
+    )
+    photo = models.ImageField(
+        "Фото товара",
+        upload_to="returns/",
+        blank=True,
+        null=True,
     )
     created_at = models.DateTimeField(
         "Дата подачи заявки",

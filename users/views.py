@@ -92,7 +92,7 @@ def profile_view(request):
 
     order_items_queryset = (
         OrderItem.objects
-        .select_related("product_variant", "product_variant__product", "product_variant__color")
+        .select_related("product_variant", "product_variant__product", "product_variant__color", "return_request")
         .prefetch_related(
             Prefetch(
                 "product_variant__product__images",
