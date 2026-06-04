@@ -1,5 +1,6 @@
 from django.urls import reverse
 
+from .cart_services import get_cart_count
 from .models import Category
 
 
@@ -17,16 +18,5 @@ def header_navigation(request):
     }
 
 
-
 def cart_counter(request):
-    cart = request.session.get("cart", {}) if hasattr(request, "session") else {}
-    count = 0
-
-    if isinstance(cart, dict):
-        for item in cart.values():
-            try:
-                count += int(item.get("quantity", 0))
-            except (AttributeError, TypeError, ValueError):
-                continue
-
-    return {"header_cart_count": count}
+    return {"header_cart_count": get_cart_count(request)}

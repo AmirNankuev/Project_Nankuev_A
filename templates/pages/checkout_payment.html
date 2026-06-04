@@ -32,8 +32,15 @@
                 Статус оплаты: {{ order.get_payment_status_display }}<br>
                 Метод оплаты: {{ order.get_payment_method_display }}
                 {% if order.promo_code %}<br>Промокод: {{ order.promo_code.code }}{% endif %}
+                {% if order.active_reservation_deadline_label %}<br>Резерв действует до: {{ order.active_reservation_deadline_label }}{% endif %}
             </p>
         </div>
+
+        {% if order.payment_status != 'paid' and not order.has_active_reservations %}
+            <div class="checkout-message checkout-message-warning">
+                Резерв товара по этому заказу уже истёк или был освобождён. Оформите заказ заново.
+            </div>
+        {% endif %}
 
         {% if order.payment_status == 'paid' %}
             <div class="checkout-success">
@@ -64,7 +71,7 @@
                     </p>
                     <button type="submit" name="action" value="demo_success">Оплатить тестово <span>→</span></button>
                 </form>
-            {% elif order.yookassa_confirmation_url %}
+            {% elif order.yookassa_confirmation_url and order.has_active_reservations %}
                 <a href="{{ order.yookassa_confirmation_url }}" class="checkout-link-button payment-main-link">Перейти к оплате ЮKassa</a>
                 <form method="post" class="checkout-form payment-action-form">
                     {% csrf_token %}

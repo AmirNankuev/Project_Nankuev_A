@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+
+{% block title %}Аналитика и отчёты — интернет-магазин одежды{% endblock %}
+
+{% block content %}
+<main class="profile-page staff-page analytics-page">
+    <section class="profile-hero">
+        <div>
+            <p class="profile-kicker">Панель менеджера</p>
+            <h1>Аналитика и отчёты</h1>
+            <p>Сводка по продажам, выручке, возвратам, популярным товарам и складским остаткам за выбранный период.</p>
+        </div>
+
+        <div class="profile-status-card">
+            <span>Период</span>
+            <strong>{{ start_date|date:"d.m" }}–{{ end_date|date:"d.m" }}</strong>
+            <small>{{ orders_count }} оплаченных заказов</small>
+        </div>
+    </section>
+
+    <section class="profile-layout">
+        <aside class="profile-sidebar">
+            <a href="{% url 'users:staff_dashboard' %}">Сводка</a>
+            <a href="{% url 'users:staff_analytics' %}" class="staff-active">Аналитика</a>
+            <a href="{% url 'users:staff_orders' %}">Заказы</a>
+            <a href="{% url 'users:staff_returns' %}">Возвраты</a>
+            <a href="{% url 'admin:catalog_product_changelist' %}">Каталог</a>
+            {% if user.can_manage_users %}
+                <a href="{% url 'admin:users_customuser_changelist' %}">Пользователи</a>
+                <a href="{% url 'admin:main_shopsettings_changelist' %}">Настройки магазина</a>
+            {% endif %}
+            <a href="{% url 'admin:index' %}">Django Admin</a>
+            <form method="post" action="{% url 'users:logout' %}">
+                {% csrf_token %}
+                <button type="submit">Выйти</button>
+            </form>
+        </aside>
+
+        <div class="profile-main">
+            <section class="profile-card staff-toolbar-card">
+                <form method="get" class="staff-search-form analytics-filter-form">
+                    <label>
+                        Начало периода
+                        <input type="date" name="start_date" value="{{ start_date_value }}">
+                    </label>
+                    <label>
+                        Конец периода
+                        <input type="date" name="end_date" value="{{ end_date_value }}">
+                    </label>
+                    <button type="submit">Сформировать отчёт</button>
+                    <a href="{% url 'users:staff_analytics' %}">Последние 30 дней</a>
+                </form>
+
+                <div class="analytics-export-links">
+                    <a href="{% url 'users:staff_analytics_export' %}?{{ query_string }}&report=sales">Экспорт продаж CSV</a>
+                    <a href="{% url 'users:staff_analytics_export' %}?{{ query_string }}&report=products">Экспорт товаров CSV</a>
+                    <a href="{% url 'users:staff_analytics_export' %}?{{ query_string }}&report=returns">Экспорт возвратов CSV</a>
+                    <a href="{% url 'users:staff_analytics_export' %}?{{ query_string }}&report=stock">Экспорт склада CSV</a>
+                </div>
+            </section>
+
+            <section class="profile-card">
+                <div class="profile-section-head">
+                    <div>
+                        <p>Финансы</p>
+                        <h2>Ключевые показатели</h2>
+                    </div>
+                    <span>{{ start_date|date:"d.m.Y" }} — {{ end_date|date:"d.m.Y" }}</span>
+                </div>
+
+                <div class="staff-kpi-grid analytics-kpi-grid">
+                    <article class="staff-kpi-card">
+                        <span>Оплаченных заказов</span>
+                        <strong>{{ orders_count }}</strong>
+                    </article>
+                    <article class="staff-kpi-card">
+                        <span>Валовая выручка</span>
+                        <strong>{{ gross_revenue }} ₽</strong>
+                    </article>
+                    <article class="staff-kpi-card">
+                        <span>Средний чек</span>
+                        <strong>{{ average_order }} ₽</strong>
+                    </article>
+                    <article class="staff-kpi-card">
+                        <span>Продано товаров</span>
+                        <strong>{{ sold_items_count }}</strong>
+                    </article>
+                    <article class="staff-kpi-card staff-kpi-card--attention">
+                        <span>Возвратов</span>
+                        <strong>{{ returns_count }}</strong>
+                    </article>
+                    <article class="staff-kpi-card staff-kpi-card--attention">
+                        <span>Сумма возвратов</span>
+                        <strong>{{ completed_refunds }} ₽</strong>
+                    </article>
+                    <article class="staff-kpi-card">
+                        <span>Чистая выручка</span>
+                        <strong>{{ net_revenue }} ₽</strong>
+                    </article>
+                    <article class="staff-kpi-card">
+                        <span>Всего заказов</span>
+                        <strong>{{ all_orders_count }}</strong>
+                    </article>
+                </div>
+            </section>
+
+            <section class="profile-card">
+                <div class="profile-section-head">
+                    <div>
+                        <p>Динамика</p>
+                        <h2>Продажи по дням</h2>
+                    </div>
+                    <a href="{% url 'users:staff_analytics_export' %}?{{ query_string }}&report=sales">Скачать CSV</a>
+                </div>
+
+                <div class="analytics-chart-list">
+                    {% for day in sales_by_day %}
+                        <div class="analytics-chart-row">
+                            <span>{{ day.day|date:"d.m.Y" }}</span>
+                            <div class="analytics-bar"><i style="width: {{ day.bar_percent }}%"></i></div>
+                            <strong>{{ day.revenue }} ₽</strong>
+                            <em>{{ day.orders_count }} заказ.</em>
+                        </div>
+                    {% empty %}
+                        <div class="profile-empty-orders">
+                            <h3>Продаж за период нет</h3>
+                            <p>Попробуйте выбрать другой диапазон дат.</p>
+                        </div>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <section class="profile-card">
+                <div class="profile-section-head">
+                    <div>
+                        <p>Ассортимент</p>
+                        <h2>Популярные товары</h2>
+                    </div>
+                    <a href="{% url 'users:staff_analytics_export' %}?{{ query_string }}&report=products">Скачать CSV</a>
+                </div>
+
+                <div class="staff-table-wrap">
+                    <table class="staff-table analytics-table">
+                        <thead>
+                            <tr>
+                                <th>Товар</th>
+                                <th>Бренд</th>
+                                <th>Категория</th>
+                                <th>Продано</th>
+                                <th>Выручка по товарам</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for product in top_products %}
+                                <tr>
+                                    <td>
+                                        <strong>{{ product.product_variant__product__name }}</strong>
+                                        <small>Артикул: {{ product.product_variant__product__article }}</small>
+                                        <div class="analytics-mini-bar"><i style="width: {{ product.bar_percent }}%"></i></div>
+                                    </td>
+                                    <td>{{ product.product_variant__product__brand__name }}</td>
+                                    <td>{{ product.product_variant__product__category__name }}</td>
+                                    <td><strong>{{ product.units }} шт.</strong></td>
+                                    <td><strong>{{ product.revenue }} ₽</strong></td>
+                                </tr>
+                            {% empty %}
+                                <tr>
+                                    <td colspan="5">
+                                        <div class="profile-empty-orders">
+                                            <h3>Нет данных по товарам</h3>
+                                            <p>За выбранный период не найдено оплаченных заказов.</p>
+                                        </div>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="profile-card">
+                <div class="profile-section-head">
+                    <div>
+                        <p>Возвраты</p>
+                        <h2>Отчёт по возвратам</h2>
+                    </div>
+                    <a href="{% url 'users:staff_analytics_export' %}?{{ query_string }}&report=returns">Скачать CSV</a>
+                </div>
+
+                <div class="staff-kpi-grid analytics-kpi-grid analytics-return-grid">
+                    <article class="staff-kpi-card staff-kpi-card--attention">
+                        <span>Новые заявки</span>
+                        <strong>{{ returns_requested_count }}</strong>
+                    </article>
+                    <article class="staff-kpi-card">
+                        <span>Завершено</span>
+                        <strong>{{ returns_completed_count }}</strong>
+                    </article>
+                    {% for item in returns_by_status %}
+                        <article class="staff-kpi-card">
+                            <span>{{ item.label }}</span>
+                            <strong>{{ item.count }}</strong>
+                            <small>{{ item.amount|default:"0.00" }} ₽</small>
+                        </article>
+                    {% empty %}
+                        <article class="staff-kpi-card">
+                            <span>Заявок нет</span>
+                            <strong>0</strong>
+                        </article>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <section class="profile-card">
+                <div class="profile-section-head">
+                    <div>
+                        <p>Склад</p>
+                        <h2>Отчёт по остаткам</h2>
+                    </div>
+                    <a href="{% url 'users:staff_analytics_export' %}?{{ query_string }}&report=stock">Скачать CSV</a>
+                </div>
+
+                <div class="staff-kpi-grid analytics-kpi-grid">
+                    <article class="staff-kpi-card">
+                        <span>Вариантов товаров</span>
+                        <strong>{{ variants_total }}</strong>
+                    </article>
+                    <article class="staff-kpi-card">
+                        <span>Единиц на складе</span>
+                        <strong>{{ total_units_on_stock }}</strong>
+                    </article>
+                    <article class="staff-kpi-card">
+                        <span>Доступно к продаже</span>
+                        <strong>{{ total_available_units }}</strong>
+                    </article>
+                    <article class="staff-kpi-card">
+                        <span>В активном резерве</span>
+                        <strong>{{ active_reserved_units }}</strong>
+                    </article>
+                    <article class="staff-kpi-card staff-kpi-card--attention">
+                        <span>Низкие остатки</span>
+                        <strong>{{ low_stock_count }}</strong>
+                    </article>
+                    <article class="staff-kpi-card staff-kpi-card--attention">
+                        <span>Нет в наличии</span>
+                        <strong>{{ out_of_stock_count }}</strong>
+                    </article>
+                </div>
+
+                <h3 class="analytics-subtitle">Низкие остатки</h3>
+                <div class="staff-table-wrap">
+                    <table class="staff-table analytics-table">
+                        <thead>
+                            <tr>
+                                <th>Товар</th>
+                                <th>Цвет / размер</th>
+                                <th>На складе</th>
+                                <th>Доступно</th>
+                                <th>Резерв</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for variant in low_stock_variants %}
+                                <tr>
+                                    <td>
+                                        <strong>{{ variant.product.name }}</strong>
+                                        <small>{{ variant.product.article }}</small>
+                                    </td>
+                                    <td>{{ variant.color.name }} / {{ variant.size }}</td>
+                                    <td>{{ variant.quantity }} шт.</td>
+                                    <td><strong>{{ variant.available_quantity }} шт.</strong></td>
+                                    <td>{{ variant.reserved_quantity|default:0 }} шт.</td>
+                                </tr>
+                            {% empty %}
+                                <tr>
+                                    <td colspan="5">Критичных остатков нет.</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <h3 class="analytics-subtitle">Нет в наличии</h3>
+                <div class="staff-table-wrap">
+                    <table class="staff-table analytics-table">
+                        <thead>
+                            <tr>
+                                <th>Товар</th>
+                                <th>Цвет / размер</th>
+                                <th>На складе</th>
+                                <th>Доступно</th>
+                                <th>Резерв</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for variant in out_of_stock_variants %}
+                                <tr>
+                                    <td>
+                                        <strong>{{ variant.product.name }}</strong>
+                                        <small>{{ variant.product.article }}</small>
+                                    </td>
+                                    <td>{{ variant.color.name }} / {{ variant.size }}</td>
+                                    <td>{{ variant.quantity }} шт.</td>
+                                    <td><strong>{{ variant.available_quantity }} шт.</strong></td>
+                                    <td>{{ variant.reserved_quantity|default:0 }} шт.</td>
+                                </tr>
+                            {% empty %}
+                                <tr>
+                                    <td colspan="5">Все товары доступны к продаже.</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </section>
+</main>
+{% endblock %}

@@ -6,8 +6,10 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Q, Prefetch
+from django.db.models import Avg, Count, Q, Prefetch
 from django.shortcuts import render, get_object_or_404, redirect
+from django.urls import reverse
+from django.views.decorators.http import require_POST
 
 from main.forms import ReturnRequestForm
 from main.email_notifications import (
@@ -15,8 +17,19 @@ from main.email_notifications import (
     notify_order_status_changed,
     notify_return_request_created,
 )
-from main.models import Order, OrderItem, PromoCode, ReturnRequest, ShopSettings
+from main.models import CartItem, Order, OrderItem, PromoCode, ReturnRequest, ShopSettings
 from main.services.cdek import CdekApiError, CdekClient
+from main.services.reservations import (
+    ReservationError,
+    attach_available_quantities,
+    confirm_order_reservations,
+    create_order_items_and_reservations,
+    get_available_quantity,
+    get_reservation_expires_at,
+    release_expired_reservations,
+    release_order_reservations,
+    RESERVATION_RELEASE_PAYMENT_FAILED,
+)
 from users.decorators import customer_required
 
 from main.services.yookassa_payment import (
@@ -26,7 +39,17 @@ from main.services.yookassa_payment import (
     payment_is_successful,
 )
 
-from .models import Product, Category, Brand, Color, ProductVariant, ProductImage
+from .cart_services import (
+    MAX_CART_ITEM_QUANTITY,
+    clear_cart_storage,
+    get_session_cart,
+    is_db_cart_available,
+    merge_session_cart_to_db,
+    normalize_cart_quantity,
+    session_cart_items,
+)
+from .forms import ProductReviewForm
+from .models import Product, Category, Brand, Collection, Color, ProductVariant, ProductImage, ProductReview
 
 
 SORT_OPTIONS = [
@@ -37,6 +60,7 @@ SORT_OPTIONS = [
 ]
 
 VIEW_MODES = {"grid", "list"}
+REVIEW_ELIGIBLE_ORDER_STATUSES = {"paid", "processing", "assembled", "shipped", "delivered"}
 
 
 def _to_decimal(value):
@@ -54,6 +78,20 @@ def _format_price(value):
     return f"{value.quantize(Decimal('0.01'))} ₽"
 
 
+def _with_review_stats(queryset):
+    return queryset.annotate(
+        published_reviews_count=Count(
+            "reviews",
+            filter=Q(reviews__status=ProductReview.Status.PUBLISHED),
+            distinct=True,
+        ),
+        published_average_rating=Avg(
+            "reviews__rating",
+            filter=Q(reviews__status=ProductReview.Status.PUBLISHED),
+        ),
+    )
+
+
 def _get_matching_variants(product, color_id="", size=""):
     variants = list(getattr(product, "prepared_variants", product.variants.select_related("color").all()))
 
@@ -69,7 +107,7 @@ def _get_matching_variants(product, color_id="", size=""):
 def _prepare_catalog_product(product, color_id="", size=""):
     matching_variants = _get_matching_variants(product, color_id=color_id, size=size)
     prices = [variant.final_price for variant in matching_variants if variant.final_price and variant.final_price > Decimal("0.00")]
-    in_stock = any(variant.quantity > 0 for variant in matching_variants)
+    in_stock = any(get_available_quantity(variant) > 0 for variant in matching_variants)
 
     if prices:
         price_value = min(prices)
@@ -123,16 +161,28 @@ def _sort_products(products, sort_value):
     return products
 
 
+def _attach_product_variant_availability(products):
+    variants = []
+    for product in products:
+        variants.extend(getattr(product, "prepared_variants", []))
+    attach_available_quantities(variants)
+    return products
+
+
 def product_list(request):
+    release_expired_reservations()
     search_query = request.GET.get("search", "").strip()
     gender = request.GET.get("gender", "")
     category_id = request.GET.get("category", "")
+    collection_id = request.GET.get("collection", "")
     brand_id = request.GET.get("brand", "")
     color_id = request.GET.get("color", "")
     size = request.GET.get("size", "")
 
     if category_id and not category_id.isdigit():
         category_id = ""
+    if collection_id and not collection_id.isdigit():
+        collection_id = ""
     if brand_id and not brand_id.isdigit():
         brand_id = ""
     if color_id and not color_id.isdigit():
@@ -152,12 +202,13 @@ def product_list(request):
     if view_mode not in VIEW_MODES:
         view_mode = "grid"
 
-    products_queryset = Product.objects.filter(
+    products_queryset = _with_review_stats(Product.objects.filter(
         is_active=True
-    ).select_related(
+    )).select_related(
         "brand",
         "category"
     ).prefetch_related(
+        "collections",
         Prefetch(
             "images",
             queryset=ProductImage.objects.filter(is_main=True).order_by("sort_order", "id"),
@@ -177,6 +228,8 @@ def product_list(request):
             | Q(description__icontains=search_query)
             | Q(brand__name__icontains=search_query)
             | Q(category__name__icontains=search_query)
+            | Q(collections__name__icontains=search_query)
+            | Q(collections__season__icontains=search_query)
         )
 
     if gender:
@@ -199,6 +252,15 @@ def product_list(request):
         else:
             category_id = ""
 
+    selected_collection_object = None
+
+    if collection_id:
+        selected_collection_object = Collection.objects.filter(pk=collection_id, is_active=True).first()
+        if selected_collection_object:
+            products_queryset = products_queryset.filter(collections=selected_collection_object)
+        else:
+            collection_id = ""
+
     if brand_id:
         products_queryset = products_queryset.filter(brand_id=brand_id)
 
@@ -211,6 +273,9 @@ def product_list(request):
         products_queryset = products_queryset.filter(**variant_filter)
 
     products_queryset = products_queryset.distinct()
+
+    products_queryset = list(products_queryset)
+    _attach_product_variant_availability(products_queryset)
 
     products_without_availability = [
         _prepare_catalog_product(product, color_id=color_id, size=size)
@@ -278,6 +343,16 @@ def product_list(request):
 
     add_category_options()
 
+    collection_options = []
+    for collection in Collection.objects.filter(is_active=True).order_by("sort_order", "-year", "name"):
+        collection_id_str = str(collection.id)
+        is_active = collection_id == collection_id_str
+        collection_options.append({
+            "object": collection,
+            "is_active": is_active,
+            "url": build_url(collection=None if is_active else collection.id),
+        })
+
     size_options = []
     for size_item in ProductVariant.objects.values_list("size", flat=True).distinct().order_by("size"):
         is_active = size == size_item
@@ -330,6 +405,8 @@ def product_list(request):
         "selected_gender": gender,
         "selected_category": category_id,
         "selected_category_object": selected_category_object,
+        "selected_collection": collection_id,
+        "selected_collection_object": selected_collection_object,
         "selected_brand": brand_id,
         "selected_color": color_id,
         "selected_size": size,
@@ -345,6 +422,7 @@ def product_list(request):
 
         "categories": all_categories,
         "category_options": category_options,
+        "collection_options": collection_options,
         "brand_options": brand_options,
         "color_options": color_options,
         "size_options": size_options,
@@ -354,17 +432,19 @@ def product_list(request):
         "grid_view_url": build_url(view="grid"),
         "list_view_url": build_url(view="list"),
         "clear_availability_url": build_url(availability=None),
+        "clear_collection_url": build_url(collection=None),
         "query_string": query_params.urlencode(),
     })
 
 
 def _product_queryset():
-    return Product.objects.filter(
+    return _with_review_stats(Product.objects.filter(
         is_active=True
-    ).select_related(
+    )).select_related(
         "brand",
         "category"
     ).prefetch_related(
+        "collections",
         Prefetch(
             "images",
             queryset=ProductImage.objects.order_by("-is_main", "sort_order", "id"),
@@ -374,12 +454,38 @@ def _product_queryset():
             "variants",
             queryset=ProductVariant.objects.select_related("color").order_by("color__name", "size"),
             to_attr="prepared_variants"
+        ),
+        Prefetch(
+            "reviews",
+            queryset=ProductReview.objects.filter(
+                status=ProductReview.Status.PUBLISHED
+            ).select_related("customer").order_by("-created_at"),
+            to_attr="published_reviews",
         )
     )
 
 
-def _product_detail_context(product):
+def _get_review_order_item(product, user):
+    if not user.is_authenticated or not getattr(user, "is_customer_role", False):
+        return None
+
+    return (
+        OrderItem.objects
+        .filter(
+            order__customer=user,
+            order__payment_status="paid",
+            order__status__in=REVIEW_ELIGIBLE_ORDER_STATUSES,
+            product_variant__product=product,
+        )
+        .select_related("order", "product_variant", "product_variant__product")
+        .order_by("-order__created_at")
+        .first()
+    )
+
+
+def _product_detail_context(product, request=None, review_form=None):
     variants = list(getattr(product, "prepared_variants", product.variants.select_related("color").all()))
+    attach_available_quantities(variants)
 
     color_options = []
     used_color_ids = set()
@@ -389,7 +495,7 @@ def _product_detail_context(product):
         used_color_ids.add(variant.color_id)
         color_options.append(variant.color)
 
-    selected_variant = next((variant for variant in variants if variant.quantity > 0), variants[0] if variants else None)
+    selected_variant = next((variant for variant in variants if get_available_quantity(variant) > 0), None)
 
     variant_options = []
     for variant in variants:
@@ -399,7 +505,7 @@ def _product_detail_context(product):
             "color_name": variant.color.name,
             "color_hex": variant.color.hex_code,
             "price_label": variant.public_price_label,
-            "quantity": variant.quantity,
+            "quantity": get_available_quantity(variant),
             "is_selected": bool(selected_variant and variant.id == selected_variant.id),
         })
 
@@ -414,6 +520,7 @@ def _product_detail_context(product):
         "brand",
         "category"
     ).prefetch_related(
+        "collections",
         Prefetch(
             "images",
             queryset=ProductImage.objects.filter(is_main=True).order_by("sort_order", "id"),
@@ -426,6 +533,25 @@ def _product_detail_context(product):
         )
     )[:4]
 
+    reviews = getattr(product, "published_reviews", None)
+    if reviews is None:
+        reviews = list(ProductReview.objects.filter(
+            product=product,
+            status=ProductReview.Status.PUBLISHED,
+        ).select_related("customer").order_by("-created_at"))
+
+    existing_user_review = None
+    review_order_item = None
+    can_create_review = False
+
+    if request and request.user.is_authenticated and getattr(request.user, "is_customer_role", False):
+        existing_user_review = ProductReview.objects.filter(
+            product=product,
+            customer=request.user,
+        ).first()
+        review_order_item = _get_review_order_item(product, request.user)
+        can_create_review = review_order_item is not None and existing_user_review is None
+
     return {
         "product": product,
         "color_options": color_options,
@@ -433,20 +559,62 @@ def _product_detail_context(product):
         "selected_price_label": selected_price_label,
         "selected_variant": selected_variant,
         "similar_products": similar_products,
+        "reviews": reviews,
+        "review_form": review_form or ProductReviewForm(),
+        "existing_user_review": existing_user_review,
+        "review_order_item": review_order_item,
+        "can_create_review": can_create_review,
     }
 
 
 def product_detail(request, slug):
+    release_expired_reservations()
     product = get_object_or_404(_product_queryset(), slug=slug)
-    return render(request, "pages/product_detail.html", _product_detail_context(product))
+    return render(request, "pages/product_detail.html", _product_detail_context(product, request=request))
 
 
 def product_detail_by_pk(request, pk):
+    release_expired_reservations()
     product = get_object_or_404(_product_queryset(), pk=pk)
-    return render(request, "pages/product_detail.html", _product_detail_context(product))
+    return render(request, "pages/product_detail.html", _product_detail_context(product, request=request))
 
 
-CART_SESSION_KEY = "cart"
+def _redirect_to_product_reviews(product):
+    return redirect(f"{reverse('catalog:product_detail', kwargs={'slug': product.slug})}#reviews")
+
+
+@require_POST
+@customer_required
+def add_product_review(request, slug):
+    release_expired_reservations()
+    product = get_object_or_404(Product.objects.filter(is_active=True), slug=slug)
+    review_order_item = _get_review_order_item(product, request.user)
+
+    if review_order_item is None:
+        messages.error(request, "Оставить отзыв можно после оплаты заказа с этим товаром.")
+        return _redirect_to_product_reviews(product)
+
+    if ProductReview.objects.filter(product=product, customer=request.user).exists():
+        messages.info(request, "Вы уже оставили отзыв на этот товар.")
+        return _redirect_to_product_reviews(product)
+
+    form = ProductReviewForm(request.POST)
+    if not form.is_valid():
+        product = get_object_or_404(_product_queryset(), slug=slug)
+        context = _product_detail_context(product, request=request, review_form=form)
+        return render(request, "pages/product_detail.html", context, status=400)
+
+    review = form.save(commit=False)
+    review.product = product
+    review.customer = request.user
+    review.order_item = review_order_item
+    review.status = ProductReview.Status.PUBLISHED
+    review.save()
+
+    messages.success(request, "Спасибо! Ваш отзыв опубликован.")
+    return _redirect_to_product_reviews(product)
+
+
 PROMO_SESSION_KEY = "promo_code"
 CART_SHIPPING_PRICE = Decimal("0.00")
 
@@ -569,30 +737,10 @@ def _handle_promo_action(request, subtotal):
     return False
 
 
-def _get_cart(request):
-    cart = request.session.get(CART_SESSION_KEY)
-    if not isinstance(cart, dict):
-        cart = {}
-        request.session[CART_SESSION_KEY] = cart
-    return cart
-
-
-def _cart_variant_ids(cart):
-    ids = []
-    for key in cart.keys():
-        try:
-            ids.append(int(key))
-        except (TypeError, ValueError):
-            continue
-    return ids
-
-
-def _cart_context(request):
-    cart = _get_cart(request)
-    variant_ids = _cart_variant_ids(cart)
-
-    variants = ProductVariant.objects.filter(
+def _cart_variant_queryset(variant_ids):
+    return ProductVariant.objects.filter(
         pk__in=variant_ids,
+        product__is_active=True,
     ).select_related(
         "product",
         "product__brand",
@@ -606,45 +754,116 @@ def _cart_context(request):
         )
     )
 
-    variants_by_id = {variant.id: variant for variant in variants}
+
+def _cart_item_queryset(user):
+    return CartItem.objects.filter(
+        customer=user,
+    ).select_related(
+        "product_variant",
+        "product_variant__product",
+        "product_variant__product__brand",
+        "product_variant__product__category",
+        "product_variant__color",
+    ).prefetch_related(
+        Prefetch(
+            "product_variant__product__images",
+            queryset=ProductImage.objects.filter(is_main=True).order_by("sort_order", "id"),
+            to_attr="main_images",
+        )
+    ).order_by("-added_at")
+
+
+def _cart_item_payload(variant, quantity):
+    available_quantity = get_available_quantity(variant)
+    quantity = min(normalize_cart_quantity(quantity), available_quantity)
+    price = variant.final_price or Decimal("0.00")
+    line_total = price * quantity
+    product = variant.product
+    main_images = getattr(product, "main_images", [])
+    image_url = main_images[0].image_url if main_images else ""
+
+    return {
+        "variant": variant,
+        "product": product,
+        "quantity": quantity,
+        "available_quantity": available_quantity,
+        "reserved_quantity": getattr(variant, "reserved_quantity", 0),
+        "price": price,
+        "price_label": _money_label(price),
+        "line_total": line_total,
+        "line_total_label": _money_label(line_total),
+        "image_url": image_url,
+        "increase_quantity": quantity + 1,
+        "decrease_quantity": quantity - 1,
+    }
+
+
+def _database_cart_items(request):
+    merge_session_cart_to_db(request)
+
     items = []
+    cart_items = list(_cart_item_queryset(request.user))
+    attach_available_quantities([cart_item.product_variant for cart_item in cart_items])
+
+    for cart_item in cart_items:
+        available_quantity = get_available_quantity(cart_item.product_variant)
+        if available_quantity <= 0:
+            cart_item.delete()
+            continue
+
+        quantity = min(normalize_cart_quantity(cart_item.quantity), available_quantity)
+        if cart_item.quantity != quantity:
+            cart_item.quantity = quantity
+            cart_item.save(update_fields=["quantity"])
+
+        items.append(_cart_item_payload(cart_item.product_variant, quantity))
+
+    return items
+
+
+def _session_cart_items(request):
+    cart = get_session_cart(request)
+    parsed_items = session_cart_items(cart)
+    variant_ids = [variant_id for variant_id, _quantity in parsed_items]
+    variants = list(_cart_variant_queryset(variant_ids))
+    attach_available_quantities(variants)
+    variants_by_id = {variant.id: variant for variant in variants}
+
+    items = []
+    cart_changed = False
+
+    for variant_id, quantity in parsed_items:
+        variant = variants_by_id.get(variant_id)
+        if variant is None or get_available_quantity(variant) <= 0:
+            cart.pop(str(variant_id), None)
+            cart_changed = True
+            continue
+
+        normalized_quantity = min(normalize_cart_quantity(quantity), get_available_quantity(variant))
+        if normalized_quantity != quantity:
+            cart[str(variant_id)] = {"quantity": normalized_quantity}
+            cart_changed = True
+
+        items.append(_cart_item_payload(variant, normalized_quantity))
+
+    if cart_changed:
+        request.session.modified = True
+
+    return items
+
+
+def _cart_context(request):
+    if is_db_cart_available(request.user):
+        items = _database_cart_items(request)
+    else:
+        items = _session_cart_items(request)
+
     subtotal = Decimal("0.00")
     total_quantity = 0
 
-    for variant_id in variant_ids:
-        variant = variants_by_id.get(variant_id)
-        if not variant:
-            cart.pop(str(variant_id), None)
-            request.session.modified = True
-            continue
-
-        try:
-            quantity = int(cart.get(str(variant_id), {}).get("quantity", 1))
-        except (TypeError, ValueError):
-            quantity = 1
-
-        quantity = max(1, min(quantity, 99))
-        price = variant.final_price or Decimal("0.00")
-        line_total = price * quantity
-        subtotal += line_total
-        total_quantity += quantity
-
-        product = variant.product
-        main_images = getattr(product, "main_images", [])
-        image_url = main_images[0].image_url if main_images else ""
-
-        items.append({
-            "variant": variant,
-            "product": product,
-            "quantity": quantity,
-            "price": price,
-            "price_label": _money_label(price),
-            "line_total": line_total,
-            "line_total_label": _money_label(line_total),
-            "image_url": image_url,
-            "increase_quantity": quantity + 1,
-            "decrease_quantity": quantity - 1,
-        })
+    for item in items:
+        subtotal += item["line_total"]
+        total_quantity += item["quantity"]
 
     promo_data = _promo_context(request, subtotal) if items else {
         "promo": None,
@@ -684,6 +903,7 @@ def _customer_features_allowed(request):
 
 
 def cart_detail(request):
+    release_expired_reservations()
     if not _customer_features_allowed(request):
         return redirect("users:staff_dashboard")
 
@@ -698,17 +918,55 @@ def _redirect_after_cart_action(request):
     return redirect("cart")
 
 
-def _add_variant_to_cart(request, variant):
-    cart = _get_cart(request)
+def _variant_can_be_added(request, variant):
+    if get_available_quantity(variant) <= 0:
+        messages.error(request, "Этот размер/цвет сейчас отсутствует на складе.")
+        return False
+    return True
+
+
+def _add_variant_to_session_cart(request, variant):
+    cart = get_session_cart(request)
     key = str(variant.id)
 
-    try:
-        current_quantity = int(cart.get(key, {}).get("quantity", 0))
-    except (TypeError, ValueError):
-        current_quantity = 0
+    current_quantity = 0
+    if isinstance(cart.get(key), dict):
+        current_quantity = normalize_cart_quantity(cart[key].get("quantity", 0), default=0)
 
-    cart[key] = {"quantity": max(1, min(current_quantity + 1, 99))}
+    new_quantity = min(current_quantity + 1, MAX_CART_ITEM_QUANTITY, get_available_quantity(variant))
+    cart[key] = {"quantity": new_quantity}
     request.session.modified = True
+
+
+def _add_variant_to_database_cart(request, variant):
+    merge_session_cart_to_db(request)
+
+    with transaction.atomic():
+        locked_variant = ProductVariant.objects.select_for_update().get(pk=variant.pk)
+        available_quantity = get_available_quantity(locked_variant)
+        if available_quantity <= 0:
+            messages.error(request, "Этот размер/цвет сейчас отсутствует на складе.")
+            return
+
+        cart_item, created = CartItem.objects.select_for_update().get_or_create(
+            customer=request.user,
+            product_variant=locked_variant,
+            defaults={"quantity": 1},
+        )
+
+        if not created:
+            cart_item.quantity = min(cart_item.quantity + 1, MAX_CART_ITEM_QUANTITY, available_quantity)
+            cart_item.save(update_fields=["quantity"])
+
+
+def _add_variant_to_cart(request, variant):
+    if not _variant_can_be_added(request, variant):
+        return
+
+    if is_db_cart_available(request.user):
+        _add_variant_to_database_cart(request, variant)
+    else:
+        _add_variant_to_session_cart(request, variant)
 
 
 def cart_add(request, variant_id):
@@ -729,48 +987,73 @@ def cart_add_product(request, product_id):
         return redirect("users:staff_dashboard")
 
     product = get_object_or_404(Product.objects.filter(is_active=True), pk=product_id)
-    variant = (
+    variants = list(
         ProductVariant.objects
-        .filter(product=product, quantity__gt=0)
+        .filter(product=product)
         .select_related("product")
         .order_by("color__name", "size")
-        .first()
     )
+    attach_available_quantities(variants)
+    variant = next((item for item in variants if get_available_quantity(item) > 0), None)
 
     if variant is None:
-        variant = (
-            ProductVariant.objects
-            .filter(product=product)
-            .select_related("product")
-            .order_by("color__name", "size")
-            .first()
-        )
-
-    if variant is not None:
+        messages.error(request, "У этого товара нет доступных вариантов на складе.")
+    else:
         _add_variant_to_cart(request, variant)
 
     return _redirect_after_cart_action(request)
+
+
+def _quantity_from_request(request):
+    try:
+        return int(request.POST.get("quantity", 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _limited_quantity_for_variant(request, variant, requested_quantity):
+    if requested_quantity <= 0:
+        return 0
+
+    available_quantity = get_available_quantity(variant)
+    if available_quantity <= 0:
+        messages.error(request, "Этот товар закончился на складе и удалён из корзины.")
+        return 0
+
+    limited_quantity = min(requested_quantity, MAX_CART_ITEM_QUANTITY, available_quantity)
+    if limited_quantity < requested_quantity:
+        messages.warning(request, f"В наличии только {limited_quantity} шт. Количество в корзине уменьшено.")
+
+    return limited_quantity
 
 
 def cart_update(request, variant_id):
     if not _customer_features_allowed(request):
         return redirect("users:staff_dashboard")
 
-    get_object_or_404(ProductVariant, pk=variant_id)
-    cart = _get_cart(request)
-    key = str(variant_id)
+    variant = get_object_or_404(ProductVariant, pk=variant_id)
+    requested_quantity = _quantity_from_request(request)
+    quantity = _limited_quantity_for_variant(request, variant, requested_quantity)
 
-    try:
-        quantity = int(request.POST.get("quantity", 1))
-    except (TypeError, ValueError):
-        quantity = 1
+    if is_db_cart_available(request.user):
+        merge_session_cart_to_db(request)
+        cart_item = CartItem.objects.filter(customer=request.user, product_variant=variant).first()
 
-    if quantity <= 0:
-        cart.pop(key, None)
+        if cart_item is not None:
+            if quantity <= 0:
+                cart_item.delete()
+            else:
+                cart_item.quantity = quantity
+                cart_item.save(update_fields=["quantity"])
     else:
-        cart[key] = {"quantity": min(quantity, 99)}
+        cart = get_session_cart(request)
+        key = str(variant_id)
+        if quantity <= 0:
+            cart.pop(key, None)
+        else:
+            cart[key] = {"quantity": quantity}
+        request.session.modified = True
 
-    request.session.modified = True
     return redirect("cart")
 
 
@@ -778,11 +1061,15 @@ def cart_remove(request, variant_id):
     if not _customer_features_allowed(request):
         return redirect("users:staff_dashboard")
 
-    cart = _get_cart(request)
-    cart.pop(str(variant_id), None)
-    request.session.modified = True
-    return redirect("cart")
+    if is_db_cart_available(request.user):
+        merge_session_cart_to_db(request)
+        CartItem.objects.filter(customer=request.user, product_variant_id=variant_id).delete()
+    else:
+        cart = get_session_cart(request)
+        cart.pop(str(variant_id), None)
+        request.session.modified = True
 
+    return redirect("cart")
 
 CHECKOUT_SESSION_KEY = "checkout_customer_data"
 CDEK_QUOTE_SESSION_KEY = "checkout_cdek_quote"
@@ -853,13 +1140,33 @@ def _update_order_from_yookassa_payment(order, payment_payload):
     order.yookassa_response = payment_payload.get("raw", payment_payload)
 
     if payment_is_successful(payment_payload):
-        order.payment_status = "paid"
-        order.status = "paid"
-        fields_to_update.append("status")
-    elif payment_is_failed(payment_payload):
-        order.payment_status = "failed"
+        if order.payment_status != "paid":
+            try:
+                confirmed_count = confirm_order_reservations(order)
+            except ReservationError as error:
+                confirmed_count = 0
+                order.yookassa_error = str(error)
+                fields_to_update.append("yookassa_error")
 
-    order.save(update_fields=fields_to_update)
+            if confirmed_count:
+                order.payment_status = "paid"
+                order.status = "paid"
+                fields_to_update.append("status")
+            else:
+                order.payment_status = "failed"
+                order.status = "cancelled"
+                order.yookassa_error = "Резерв товара истёк или был освобождён. Заказ отменён в системе."
+                fields_to_update.extend(["status", "yookassa_error"])
+        else:
+            order.status = "paid"
+            fields_to_update.append("status")
+    elif payment_is_failed(payment_payload):
+        release_order_reservations(order, reason=RESERVATION_RELEASE_PAYMENT_FAILED)
+        order.payment_status = "failed"
+        order.status = "cancelled"
+        fields_to_update.append("status")
+
+    order.save(update_fields=list(dict.fromkeys(fields_to_update)))
     notify_order_status_changed(order, old_status=old_status, old_payment_status=old_payment_status)
     return order
 
@@ -1001,6 +1308,7 @@ def _delivery_page_context(request, cart_context, *, order=None, quote=None, del
 
 def _create_order_from_cart(request, cart_context, delivery_info, checkout_data, delivery_type, payment_method):
     with transaction.atomic():
+        release_expired_reservations()
         promo = cart_context.get("promo")
         discount_amount = Decimal("0.00")
 
@@ -1026,22 +1334,15 @@ def _create_order_from_cart(request, cart_context, delivery_info, checkout_data,
             cdek_delivery_period_max=delivery_info.get("period_max"),
         )
 
-        for item in cart_context["cart_items"]:
-            variant = ProductVariant.objects.select_for_update().get(pk=item["variant"].pk)
-            quantity = item["quantity"]
+        expires_at = get_reservation_expires_at() if _payment_requires_yookassa(payment_method) else None
+        create_order_items_and_reservations(
+            order,
+            cart_context["cart_items"],
+            expires_at=expires_at,
+        )
 
-            if variant.quantity < quantity:
-                raise ValueError(f"Недостаточно товара на складе: {variant}")
-
-            variant.quantity -= quantity
-            variant.save(update_fields=["quantity"])
-
-            OrderItem.objects.create(
-                order=order,
-                product_variant=variant,
-                quantity=quantity,
-                unit_price=item["price"],
-            )
+        if not _payment_requires_yookassa(payment_method):
+            confirm_order_reservations(order)
 
         if promo is not None and discount_amount > Decimal("0.00"):
             promo.used_count += 1
@@ -1054,6 +1355,7 @@ def _create_order_from_cart(request, cart_context, delivery_info, checkout_data,
 
 @customer_required
 def checkout(request):
+    release_expired_reservations()
     context = _cart_context(request)
     checkout_data = request.session.get(CHECKOUT_SESSION_KEY, {})
     context["checkout_data"] = checkout_data
@@ -1081,6 +1383,7 @@ def checkout(request):
 
 @customer_required
 def checkout_delivery(request):
+    release_expired_reservations()
     cart_context = _cart_context(request)
     checkout_data = request.session.get(CHECKOUT_SESSION_KEY, {})
 
@@ -1173,7 +1476,7 @@ def checkout_delivery(request):
             order.save(update_fields=["cdek_status", "cdek_error"])
             messages.warning(request, "Заказ создан локально, но не был отправлен в СДЭК. Проверьте заказ в админке.")
 
-        request.session[CART_SESSION_KEY] = {}
+        clear_cart_storage(request)
         request.session.pop(CHECKOUT_SESSION_KEY, None)
         request.session.pop(CDEK_QUOTE_SESSION_KEY, None)
         request.session.pop(PROMO_SESSION_KEY, None)
@@ -1241,9 +1544,11 @@ def checkout_delivery(request):
 
 @login_required
 def checkout_payment(request, order_number):
+    release_expired_reservations()
     orders = Order.objects.prefetch_related(
         "items__product_variant__product",
         "items__product_variant__color",
+        "reservations",
     )
 
     if not getattr(request.user, "can_manage_shop", False):
@@ -1257,6 +1562,10 @@ def checkout_payment(request, order_number):
         if action == "demo_success":
             if not settings.YOOKASSA_DEMO_MODE:
                 messages.error(request, "Демо-оплата отключена. Проверьте платёж через ЮKassa.")
+                return redirect("checkout_payment", order_number=order.order_number)
+
+            if not order.has_active_reservations and order.payment_status != "paid":
+                messages.error(request, "Срок резервирования товара истёк. Оформите заказ заново.")
                 return redirect("checkout_payment", order_number=order.order_number)
 
             demo_payload = {
@@ -1294,7 +1603,7 @@ def checkout_payment(request, order_number):
         "delivery_price_label": _money_label(order.delivery_price),
         "total_label": _money_label(order.total_amount),
         "yookassa_demo_mode": settings.YOOKASSA_DEMO_MODE,
-        "can_demo_pay": settings.YOOKASSA_DEMO_MODE and order.payment_status != "paid",
+        "can_demo_pay": settings.YOOKASSA_DEMO_MODE and order.payment_status != "paid" and order.has_active_reservations,
     })
 
 

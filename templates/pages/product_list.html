@@ -11,6 +11,7 @@
             {% if search_query %}<input type="hidden" name="search" value="{{ search_query }}">{% endif %}
             {% if selected_gender %}<input type="hidden" name="gender" value="{{ selected_gender }}">{% endif %}
             {% if selected_category %}<input type="hidden" name="category" value="{{ selected_category }}">{% endif %}
+            {% if selected_collection %}<input type="hidden" name="collection" value="{{ selected_collection }}">{% endif %}
             {% if selected_brand %}<input type="hidden" name="brand" value="{{ selected_brand }}">{% endif %}
             {% if selected_color %}<input type="hidden" name="color" value="{{ selected_color }}">{% endif %}
             {% if selected_size %}<input type="hidden" name="size" value="{{ selected_size }}">{% endif %}
@@ -59,6 +60,21 @@
                 </div>
             </details>
 
+            <details class="filter-details" {% if selected_collection %}open{% endif %}>
+                <summary>Коллекции</summary>
+                <div class="filter-options">
+                    <a href="{{ clear_collection_url }}" class="filter-option {% if not selected_collection %}active{% endif %}">Все коллекции</a>
+                    {% for option in collection_options %}
+                        <a href="{{ option.url }}" class="filter-option {% if option.is_active %}active{% endif %}">
+                            {{ option.object.name }}
+                            {% if option.object.display_period %}<small>{{ option.object.display_period }}</small>{% endif %}
+                        </a>
+                    {% empty %}
+                        <span class="filter-muted">Коллекции пока не добавлены</span>
+                    {% endfor %}
+                </div>
+            </details>
+
             <details class="filter-details" {% if selected_color %}open{% endif %}>
                 <summary>Цвета</summary>
                 <div class="filter-options color-options">
@@ -103,7 +119,8 @@
         <div class="catalog-topline">
             <div>
                 <p class="breadcrumbs"><a href="{% url 'home' %}">Главная</a> / <span>Товары</span></p>
-                <h1>{% if selected_category_object %}{{ selected_category_object.name }}{% elif selected_gender == 'male' %}Мужское{% elif selected_gender == 'female' %}Женское{% elif selected_gender == 'unisex' %}Унисекс{% else %}Товары{% endif %}</h1>
+                <h1>{% if selected_collection_object %}{{ selected_collection_object.name }}{% elif selected_category_object %}{{ selected_category_object.name }}{% elif selected_gender == 'male' %}Мужское{% elif selected_gender == 'female' %}Женское{% elif selected_gender == 'unisex' %}Унисекс{% else %}Товары{% endif %}</h1>
+                {% if selected_collection_object and selected_collection_object.display_period %}<p class="catalog-found">{{ selected_collection_object.display_period }}</p>{% endif %}
                 <p class="catalog-found">Найдено товаров: {{ total_found }}</p>
             </div>
         </div>
@@ -113,6 +130,7 @@
                 {% if search_query %}<input type="hidden" name="search" value="{{ search_query }}">{% endif %}
                 {% if selected_gender %}<input type="hidden" name="gender" value="{{ selected_gender }}">{% endif %}
                 {% if selected_category %}<input type="hidden" name="category" value="{{ selected_category }}">{% endif %}
+                {% if selected_collection %}<input type="hidden" name="collection" value="{{ selected_collection }}">{% endif %}
                 {% if selected_size %}<input type="hidden" name="size" value="{{ selected_size }}">{% endif %}
                 {% if selected_color %}<input type="hidden" name="color" value="{{ selected_color }}">{% endif %}
                 {% if selected_brand %}<input type="hidden" name="brand" value="{{ selected_brand }}">{% endif %}
@@ -141,39 +159,58 @@
             {% endfor %}
         </div>
 
+        {% if collection_options %}
+            <div class="category-chip-grid" aria-label="Быстрые коллекции">
+                {% for option in collection_options|slice:":6" %}
+                    <a class="category-tile {% if option.is_active %}active{% endif %}" href="{{ option.url }}">{{ option.object.name }}</a>
+                {% endfor %}
+            </div>
+        {% endif %}
+
         <div class="catalog-grid catalog-grid--{{ view_mode }}">
             {% for product in products %}
                 <article class="catalog-product-card">
-                    <a href="{% url 'catalog:product_detail' product.slug %}" class="catalog-product-image image-frame" {% if product.main_images %}style="--image-url: url('{{ product.main_images.0.image_url }}');"{% endif %}>
-                        {% if product.main_images %}
-                            <img src="{{ product.main_images.0.image_url }}" alt="{{ product.name }}">
-                        {% else %}
-                            <div class="image-placeholder">Нет изображения</div>
-                        {% endif %}
-                    </a>
+                    <div class="catalog-card-image-wrap">
+                        <a href="{% url 'catalog:product_detail' product.slug %}" class="catalog-product-image image-frame" {% if product.main_images %}style="--image-url: url('{{ product.main_images.0.image_url }}');"{% endif %}>
+                            {% if product.main_images %}
+                                <img src="{{ product.main_images.0.image_url }}" alt="{{ product.name }}" loading="lazy">
+                            {% else %}
+                                <div class="image-placeholder">Нет изображения</div>
+                            {% endif %}
+                        </a>
 
-                    <form method="post" action="{% url 'cart_add_product' product.id %}" class="catalog-quick-cart-form">
-                        {% csrf_token %}
-                        <input type="hidden" name="next" value="{{ request.get_full_path }}">
-                        <button type="submit" aria-label="Добавить товар в корзину">+</button>
-                    </form>
+                        <form method="post" action="{% url 'cart_add_product' product.id %}" class="catalog-quick-cart-form">
+                            {% csrf_token %}
+                            <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                            <button type="submit" aria-label="Добавить товар в корзину">Добавить в корзину</button>
+                        </form>
+                    </div>
 
                     <div class="catalog-card-info">
                         <div class="catalog-card-meta">
                             <p>
                                 {{ product.category.name }}
-                                {% if product.prepared_variants %}
-                                    <span class="color-preview" style="background-color: {{ product.prepared_variants.0.color.hex_code }}"></span>
-                                    <small>+{{ product.prepared_variants|length }}</small>
-                                {% endif %}
                             </p>
-                            <p class="catalog-card-brand">{{ product.brand.name }}</p>
+                            <p class="catalog-card-brand">
+                                {{ product.brand.name }}
+                                {% with first_collection=product.collections.all|first %}
+                                    {% if first_collection %} · {{ first_collection.name }}{% endif %}
+                                {% endwith %}
+                            </p>
                         </div>
 
                         <div class="catalog-card-bottom">
                             <h3><a href="{% url 'catalog:product_detail' product.slug %}">{{ product.name }}</a></h3>
                             <strong>{% if product.card_price_label %}{{ product.card_price_label }}{% else %}{{ product.price_from_label }}{% endif %}</strong>
                         </div>
+
+                        <p class="catalog-card-rating">
+                            {% if product.reviews_count %}
+                                Есть отзывы
+                            {% else %}
+                                Нет отзывов
+                            {% endif %}
+                        </p>
 
                         <p class="catalog-list-description">
                             {% if product.description %}{{ product.description|truncatechars:180 }}{% else %}Описание товара пока не добавлено.{% endif %}

@@ -1,23 +1,25 @@
 <article class="catalog-product-card">
-    <a href="{% url 'catalog:product_detail' product.slug %}" class="catalog-product-image image-frame" {% if product.main_images %}style="--image-url: url('{{ product.main_images.0.image_url }}');"{% endif %}>
-        {% if product.main_images %}
-            <img src="{{ product.main_images.0.image_url }}" alt="{{ product.name }}">
-        {% else %}
-            {% with image=product.images.first %}
-                {% if image %}
-                    <img src="{{ image.image_url }}" alt="{{ product.name }}">
-                {% else %}
-                    <div class="image-placeholder">Нет изображения</div>
-                {% endif %}
-            {% endwith %}
-        {% endif %}
-    </a>
+    <div class="catalog-card-image-wrap">
+        <a href="{% url 'catalog:product_detail' product.slug %}" class="catalog-product-image image-frame" {% if product.main_images %}style="--image-url: url('{{ product.main_images.0.image_url }}');"{% endif %}>
+            {% if product.main_images %}
+                <img src="{{ product.main_images.0.image_url }}" alt="{{ product.name }}" loading="lazy">
+            {% else %}
+                {% with image=product.images.first %}
+                    {% if image %}
+                        <img src="{{ image.image_url }}" alt="{{ product.name }}" loading="lazy">
+                    {% else %}
+                        <div class="image-placeholder">Нет изображения</div>
+                    {% endif %}
+                {% endwith %}
+            {% endif %}
+        </a>
 
-    <form method="post" action="{% url 'cart_add_product' product.id %}" class="catalog-quick-cart-form">
-        {% csrf_token %}
-        <input type="hidden" name="next" value="{{ request.get_full_path }}">
-        <button type="submit" aria-label="Добавить товар в корзину">+</button>
-    </form>
+        <form method="post" action="{% url 'cart_add_product' product.id %}" class="catalog-quick-cart-form">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ request.get_full_path }}">
+            <button type="submit" aria-label="Добавить товар в корзину">Добавить в корзину</button>
+        </form>
+    </div>
 
     <div class="catalog-card-meta">
         <p>{{ product.category.name }}</p>
@@ -27,4 +29,12 @@
         <h3><a href="{% url 'catalog:product_detail' product.slug %}">{{ product.name }}</a></h3>
         <strong>{{ product.price_from_label }}</strong>
     </div>
+
+    <p class="catalog-card-rating">
+        {% if product.reviews_count %}
+            Есть отзывы
+        {% else %}
+            Нет отзывов
+        {% endif %}
+    </p>
 </article>

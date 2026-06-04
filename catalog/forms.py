@@ -1,7 +1,36 @@
 from django import forms
 from django.forms.models import BaseInlineFormSet
 
-from .models import ProductImage
+from .models import ProductImage, ProductReview
+
+
+class ProductReviewForm(forms.ModelForm):
+    rating = forms.TypedChoiceField(
+        label="Оценка",
+        coerce=int,
+        choices=ProductReview.RATING_CHOICES,
+        widget=forms.RadioSelect,
+    )
+
+    class Meta:
+        model = ProductReview
+        fields = ("rating", "text")
+        labels = {
+            "text": "Отзыв",
+        }
+        widgets = {
+            "text": forms.Textarea(attrs={
+                "rows": 5,
+                "placeholder": "Расскажите, подошёл ли размер, качество и внешний вид товара.",
+                "maxlength": 2000,
+            }),
+        }
+
+    def clean_text(self):
+        text = (self.cleaned_data.get("text") or "").strip()
+        if len(text) < 10:
+            raise forms.ValidationError("Отзыв должен содержать не менее 10 символов.")
+        return text
 
 
 class ProductImageInlineForm(forms.ModelForm):

@@ -5,7 +5,7 @@ from image_uploader_widget.admin import ImageUploaderInline
 from image_uploader_widget.widgets import ImageUploaderWidget
 
 from .forms import ProductImageInlineForm, ProductImageInlineFormSet
-from .models import Brand, Category, Color, Product, ProductImage, ProductVariant
+from .models import Brand, Category, Collection, Color, Product, ProductImage, ProductReview, ProductVariant
 
 
 def normalize_product_images(product):
@@ -77,6 +77,16 @@ class ProductImageInline(ImageUploaderInline):
         return format_html('<span class="product-image-main-badge">{}</span>', label)
 
 
+class ProductReviewInline(admin.TabularInline):
+    model = ProductReview
+    extra = 0
+    fields = ("customer", "rating", "status", "text", "created_at")
+    readonly_fields = ("customer", "created_at")
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(Brand)
 class BrandAdmin(admin.ModelAdmin):
     list_display = ("id", "name")
@@ -92,6 +102,37 @@ class CategoryAdmin(admin.ModelAdmin):
     search_fields = ("name", "slug")
     list_filter = ("gender", "parent")
     ordering = ("gender", "parent__name", "name")
+
+
+@admin.register(Collection)
+class CollectionAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "name",
+        "slug",
+        "season",
+        "year",
+        "is_active",
+        "sort_order",
+        "products_count",
+    )
+    fields = (
+        "name",
+        "slug",
+        "season",
+        "year",
+        "description",
+        "is_active",
+        "sort_order",
+    )
+    readonly_fields = ("slug",)
+    search_fields = ("name", "slug", "season", "description")
+    list_filter = ("is_active", "season", "year")
+    ordering = ("sort_order", "-year", "name")
+
+    @admin.display(description="Товаров")
+    def products_count(self, obj):
+        return obj.products.count()
 
 
 @admin.register(Color)
@@ -110,15 +151,19 @@ class ProductAdmin(admin.ModelAdmin):
         "slug",
         "brand",
         "category",
+        "collection_names",
         "price_from_display",
+        "rating_display",
+        "reviews_count_display",
         "is_active",
         "created_at",
     )
     readonly_fields = ("slug", "price_from_display")
     search_fields = ("article", "name", "slug", "description")
-    list_filter = ("brand", "category", "is_active")
+    list_filter = ("brand", "category", "collections", "is_active")
     ordering = ("-created_at",)
-    inlines = [ProductVariantInline, ProductImageInline]
+    filter_horizontal = ("collections",)
+    inlines = [ProductVariantInline, ProductImageInline, ProductReviewInline]
     fieldsets = (
         ("Основная информация", {
             "fields": (
@@ -128,6 +173,7 @@ class ProductAdmin(admin.ModelAdmin):
                 "description",
                 "brand",
                 "category",
+                "collections",
                 "is_active",
             )
         }),
@@ -143,12 +189,34 @@ class ProductAdmin(admin.ModelAdmin):
         }),
     )
 
+
+    @admin.display(description="Коллекции")
+    def collection_names(self, obj):
+        collections = list(obj.collections.all()[:3])
+        if not collections:
+            return "—"
+
+        names = ", ".join(collection.name for collection in collections)
+        if obj.collections.count() > 3:
+            names += " …"
+        return names
+
     @admin.display(description="Цена на сайте")
     def price_from_display(self, obj):
         if not obj or not obj.pk:
             return "Появится после добавления вариантов"
 
         return obj.price_from_label
+
+    @admin.display(description="Рейтинг")
+    def rating_display(self, obj):
+        if not obj.reviews_count:
+            return "—"
+        return obj.average_rating_label
+
+    @admin.display(description="Отзывов")
+    def reviews_count_display(self, obj):
+        return obj.reviews_count
 
     def save_related(self, request, form, formsets, change):
         super().save_related(request, form, formsets, change)
@@ -226,3 +294,38 @@ class ProductImageAdmin(admin.ModelAdmin):
         super().delete_queryset(request, queryset)
         for product in products:
             normalize_product_images(product)
+
+@admin.register(ProductReview)
+class ProductReviewAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "product",
+        "customer",
+        "rating",
+        "status",
+        "created_at",
+    )
+    list_display_links = ("id", "product")
+    search_fields = (
+        "product__name",
+        "product__article",
+        "customer__username",
+        "customer__email",
+        "customer__full_name",
+        "text",
+    )
+    list_filter = ("rating", "status", "created_at")
+    readonly_fields = ("created_at", "updated_at")
+    ordering = ("-created_at",)
+    actions = ("publish_reviews", "reject_reviews")
+
+    @admin.action(description="Опубликовать выбранные отзывы")
+    def publish_reviews(self, request, queryset):
+        updated = queryset.update(status=ProductReview.Status.PUBLISHED)
+        self.message_user(request, f"Опубликовано отзывов: {updated}")
+
+    @admin.action(description="Отклонить выбранные отзывы")
+    def reject_reviews(self, request, queryset):
+        updated = queryset.update(status=ProductReview.Status.REJECTED)
+        self.message_user(request, f"Отклонено отзывов: {updated}")
+

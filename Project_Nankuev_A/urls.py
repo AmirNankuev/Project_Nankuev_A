@@ -10,7 +10,7 @@ from main.views import home
 from catalog import views as catalog_views
 
 urlpatterns = [
-    path("admin/", admin.site.urls),
+    path(settings.ADMIN_URL, admin.site.urls),
     path("", home, name="home"),
     path("catalog/", include("catalog.urls")),
     path("cart/", catalog_views.cart_detail, name="cart"),

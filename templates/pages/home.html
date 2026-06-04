@@ -74,12 +74,17 @@
                     <form method="post" action="{% url 'cart_add_product' product.id %}" class="quick-cart-form">
                         {% csrf_token %}
                         <input type="hidden" name="next" value="{{ request.get_full_path }}">
-                        <button class="plus-btn" type="submit" aria-label="Добавить товар в корзину">+</button>
+                        <button class="plus-btn" type="submit" aria-label="Добавить товар в корзину">Добавить в корзину</button>
                     </form>
 
                     <div class="product-info">
                         <div>
-                            <p class="product-type">{{ product.category }}</p>
+                            <p class="product-type">
+                                {{ product.category }}
+                                {% with first_collection=product.collections.all|first %}
+                                    {% if first_collection %} · {{ first_collection.name }}{% endif %}
+                                {% endwith %}
+                            </p>
                             <h3>{{ product.name }}</h3>
                         </div>
 
@@ -94,14 +99,23 @@
 
     <section class="collections-section" id="collections">
         <div class="collections-head">
-            <h2>XIV<br>КОЛЛЕКЦИИ<br>23-24</h2>
+            <h2>
+                {% if featured_collection %}
+                    {{ featured_collection.name|upper }}
+                    {% if featured_collection.display_period %}<br>{{ featured_collection.display_period|upper }}{% endif %}
+                {% else %}
+                    XIV<br>КОЛЛЕКЦИИ<br>23-24
+                {% endif %}
+            </h2>
 
             <div class="catalog-controls">
                 <div class="filter-line static-filters">
                     <a href="{% url 'catalog:product_list' %}">Все</a>
+                    {% if featured_collection %}
+                        <a href="{% url 'catalog:product_list' %}?collection={{ featured_collection.id }}">Открыть коллекцию</a>
+                    {% endif %}
                     <a href="{% url 'catalog:product_list' %}?gender=male">Мужское</a>
                     <a href="{% url 'catalog:product_list' %}?gender=female">Женское</a>
-                    <a href="{% url 'catalog:product_list' %}?gender=unisex">Унисекс</a>
                     <a href="{% url 'catalog:product_list' %}">Фильтры (+)</a>
                     <a href="{% url 'catalog:product_list' %}">Сортировка (-)</a>
                 </div>
@@ -128,12 +142,17 @@
                     <form method="post" action="{% url 'cart_add_product' product.id %}" class="quick-cart-form">
                         {% csrf_token %}
                         <input type="hidden" name="next" value="{{ request.get_full_path }}">
-                        <button class="plus-btn" type="submit" aria-label="Добавить товар в корзину">+</button>
+                        <button class="plus-btn" type="submit" aria-label="Добавить товар в корзину">Добавить в корзину</button>
                     </form>
 
                     <div class="product-info">
                         <div>
-                            <p class="product-type">{{ product.category }}</p>
+                            <p class="product-type">
+                                {{ product.category }}
+                                {% with first_collection=product.collections.all|first %}
+                                    {% if first_collection %} · {{ first_collection.name }}{% endif %}
+                                {% endwith %}
+                            </p>
                             <h3>{{ product.name }}</h3>
                         </div>
 
@@ -145,7 +164,7 @@
             {% endfor %}
         </div>
 
-        <a href="{% url 'catalog:product_list' %}" class="see-more-link">
+        <a href="{% if featured_collection %}{% url 'catalog:product_list' %}?collection={{ featured_collection.id }}{% else %}{% url 'catalog:product_list' %}{% endif %}" class="see-more-link">
             Ещё <span>⌄</span>
         </a>
     </section>

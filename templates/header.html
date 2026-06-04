@@ -4,6 +4,7 @@
 
         <nav class="nav" aria-label="Главное меню">
             <a href="{% url 'home' %}">Главная</a>
+            <a href="{% url 'home' %}#collections">Коллекции</a>
             <a href="{% url 'catalog:product_list' %}">Каталог</a>
             <a href="{% url 'catalog:product_list' %}?sort=newest">Новинки</a>
         </nav>

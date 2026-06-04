@@ -1,7 +1,8 @@
 from django.contrib import admin, messages
 from django.utils import timezone
 
-from .models import CustomerProfile, Order, OrderItem, PromoCode, ReturnRequest, CartItem, ShopSettings
+from .models import CustomerProfile, Order, OrderItem, PromoCode, ReturnRequest, CartItem, ShopSettings, StockReservation
+from .services.reservations import ReservationError, confirm_order_reservations, release_order_reservations
 
 
 @admin.register(CustomerProfile)
@@ -27,7 +28,7 @@ class ShopSettingsAdmin(admin.ModelAdmin):
     readonly_fields = ("updated_at",)
     fieldsets = (
         ("Возвраты", {
-            "fields": ("return_period_days",),
+            "fields": ("return_period_days", "reservation_hold_minutes"),
         }),
         ("Доставка", {
             "fields": ("free_delivery_from", "delivery_terms"),
@@ -92,6 +93,25 @@ class OrderItemInline(admin.TabularInline):
         return False
 
 
+class StockReservationInline(admin.TabularInline):
+    model = StockReservation
+    extra = 0
+    readonly_fields = (
+        "product_variant",
+        "quantity",
+        "status",
+        "expires_at",
+        "confirmed_at",
+        "released_at",
+        "release_reason",
+        "created_at",
+    )
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
     list_display = (
@@ -121,7 +141,7 @@ class OrderAdmin(admin.ModelAdmin):
     )
     list_filter = ("status", "payment_status", "yookassa_payment_status", "delivery_type", "payment_method", "cdek_status", "promo_code", "created_at")
     readonly_fields = ("order_number", "customer", "total_amount", "cdek_response", "cdek_error", "yookassa_response", "yookassa_error", "created_at", "updated_at")
-    inlines = (OrderItemInline,)
+    inlines = (OrderItemInline, StockReservationInline)
     ordering = ("-created_at",)
     fieldsets = (
         ("Основное", {
@@ -158,6 +178,19 @@ class OrderAdmin(admin.ModelAdmin):
             "fields": ("created_at", "updated_at"),
         }),
     )
+
+    def save_model(self, request, obj, form, change):
+        if change:
+            if obj.payment_status == "paid" or obj.status in {"paid", "processing", "assembled", "shipped", "delivered"}:
+                try:
+                    confirm_order_reservations(obj)
+                except ReservationError as error:
+                    self.message_user(request, f"Не удалось подтвердить резерв: {error}", messages.ERROR)
+
+            if obj.payment_status == "failed" or obj.status == "cancelled":
+                release_order_reservations(obj, reason="manual_update")
+
+        super().save_model(request, obj, form, change)
 
 
 @admin.register(OrderItem)
@@ -241,6 +274,15 @@ class ReturnRequestAdmin(admin.ModelAdmin):
             completed += 1
 
         self.message_user(request, f"Завершено возвратов: {completed}.", messages.SUCCESS)
+
+
+@admin.register(StockReservation)
+class StockReservationAdmin(admin.ModelAdmin):
+    list_display = ("id", "order", "customer", "product_variant", "quantity", "status", "expires_at", "confirmed_at", "released_at")
+    list_filter = ("status", "expires_at", "confirmed_at", "released_at")
+    search_fields = ("order__order_number", "customer__username", "customer__email", "product_variant__product__name")
+    readonly_fields = ("created_at", "updated_at")
+    ordering = ("-created_at",)
 
 
 @admin.register(CartItem)

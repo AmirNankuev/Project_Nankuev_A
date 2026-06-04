@@ -38,10 +38,25 @@
         </div>
 
         <aside class="product-info-panel">
-            <button class="detail-favorite" type="button" aria-label="Добавить в избранное">♡</button>
-
             <p class="detail-category">{{ product.category }}</p>
             <h1>{{ product.name }}</h1>
+
+            <div class="product-rating-summary">
+                {% if product.reviews_count %}
+                    <span class="rating-stars" aria-hidden="true">★★★★★</span>
+                    <a href="#reviews">{{ product.average_rating_label }} · отзывов: {{ product.reviews_count }}</a>
+                {% else %}
+                    <a href="#reviews">Отзывов пока нет</a>
+                {% endif %}
+            </div>
+
+            {% if product.collections.all %}
+                <div class="detail-guide-links">
+                    {% for collection in product.collections.all %}
+                        <a href="{% url 'catalog:product_list' %}?collection={{ collection.id }}">{{ collection.name }}</a>{% if not forloop.last %}<span>|</span>{% endif %}
+                    {% endfor %}
+                </div>
+            {% endif %}
 
             <strong class="selected-variant-price" id="selected-variant-price">
                 {{ selected_price_label }}
@@ -94,11 +109,6 @@
                 </div>
             </div>
 
-            <div class="detail-guide-links">
-                <a href="#">Найдите свой размер</a>
-                <span>|</span>
-                <a href="#">Таблица размеров</a>
-            </div>
 
             {% if selected_variant %}
                 <form method="post" action="{% url 'cart_add' selected_variant.id %}" class="detail-cart-form" id="detail-cart-form">
@@ -110,6 +120,76 @@
             {% endif %}
         </aside>
     </section>
+
+
+    <section class="product-reviews" id="reviews" aria-label="Отзывы о товаре">
+        <div class="reviews-header">
+            <div>
+                <p class="section-kicker">Отзывы покупателей</p>
+                <h2>Отзывы и оценки товара</h2>
+            </div>
+            <div class="reviews-summary-card">
+                {% if product.reviews_count %}
+                    <strong>{{ product.average_rating_label }}</strong>
+                    <span>На основе отзывов: {{ product.reviews_count }}</span>
+                {% else %}
+                    <strong>Нет оценок</strong>
+                    <span>Станьте первым покупателем, который оставит отзыв.</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="reviews-layout">
+            <div class="review-form-card">
+                <h3>Оставить отзыв</h3>
+
+                {% if can_create_review %}
+                    <form method="post" action="{% url 'catalog:add_product_review' product.slug %}" class="review-form">
+                        {% csrf_token %}
+
+                        <div class="review-field">
+                            <label>{{ review_form.rating.label }}</label>
+                            {{ review_form.rating }}
+                            {% for error in review_form.rating.errors %}<small class="form-error">{{ error }}</small>{% endfor %}
+                        </div>
+
+                        <div class="review-field">
+                            <label for="{{ review_form.text.id_for_label }}">{{ review_form.text.label }}</label>
+                            {{ review_form.text }}
+                            {% for error in review_form.text.errors %}<small class="form-error">{{ error }}</small>{% endfor %}
+                        </div>
+
+                        <button type="submit" class="review-submit-btn">Опубликовать отзыв</button>
+                    </form>
+                {% elif user.is_authenticated and existing_user_review %}
+                    <p class="review-note">Вы уже оставили отзыв на этот товар.</p>
+                {% elif user.is_authenticated %}
+                    <p class="review-note">Оставлять отзыв могут покупатели после оплаты заказа с этим товаром.</p>
+                {% else %}
+                    <p class="review-note">Войдите в аккаунт покупателя, чтобы оставить отзыв после покупки.</p>
+                    <a class="review-login-link" href="{% url 'users:login' %}?next={{ request.get_full_path|urlencode }}">Войти</a>
+                {% endif %}
+            </div>
+
+            <div class="reviews-list">
+                {% for review in reviews %}
+                    <article class="review-card">
+                        <div class="review-card-head">
+                            <div>
+                                <strong>{{ review.author_name }}</strong>
+                                <span>{{ review.created_at|date:"d.m.Y" }}</span>
+                            </div>
+                            <span class="review-rating">★ {{ review.rating_label }}</span>
+                        </div>
+                        <p>{{ review.text|linebreaksbr }}</p>
+                    </article>
+                {% empty %}
+                    <p class="empty reviews-empty">Пока нет опубликованных отзывов.</p>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+
 </main>
 
 <script>

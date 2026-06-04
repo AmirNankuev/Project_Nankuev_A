@@ -1,4 +1,7 @@
+import csv
+from datetime import datetime, time
 from decimal import Decimal, InvalidOperation
+from urllib.parse import urlencode
 
 from django.contrib import messages
 from django.contrib.auth import login
@@ -13,14 +16,17 @@ from django.contrib.auth.views import (
     PasswordResetView,
 )
 from django.core.paginator import Paginator
+from django.http import HttpResponse
 from django.db import transaction
-from django.db.models import Prefetch, Q
+from django.db.models import Count, DecimalField, IntegerField, Prefetch, Q, Sum, Value
+from django.db.models.functions import Coalesce, TruncDate
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone
 from django.utils.encoding import force_str
 from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_decode
 
+from catalog.cart_services import merge_session_cart_to_db
 from catalog.models import Product, ProductImage, ProductVariant
 from main.email_notifications import (
     notify_email_confirmation,
@@ -29,6 +35,13 @@ from main.email_notifications import (
     notify_return_status_changed,
 )
 from main.models import CustomerProfile, Order, OrderItem, ReturnRequest
+from main.services.reservations import (
+    ReservationError,
+    attach_available_quantities,
+    confirm_order_reservations,
+    release_expired_reservations,
+    release_order_reservations,
+)
 
 from .decorators import manager_required
 from .forms import LoginForm, ProfileForm, RegisterForm
@@ -67,6 +80,182 @@ def _safe_next_or_default(request, default_url):
     ):
         return next_url
     return default_url
+
+
+def _decimal_zero():
+    return Decimal("0.00")
+
+
+def _money_sum(expression):
+    return Coalesce(
+        Sum(expression),
+        Value(_decimal_zero()),
+        output_field=DecimalField(max_digits=12, decimal_places=2),
+    )
+
+
+def _parse_report_date(value, default_date):
+    if not value:
+        return default_date
+
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return default_date
+
+
+def _analytics_period_from_request(request):
+    today = timezone.localdate()
+    default_end = today
+    default_start = today - timezone.timedelta(days=29)
+
+    start_date = _parse_report_date(request.GET.get("start_date"), default_start)
+    end_date = _parse_report_date(request.GET.get("end_date"), default_end)
+
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    current_tz = timezone.get_current_timezone()
+    start_datetime = timezone.make_aware(datetime.combine(start_date, time.min), current_tz)
+    end_datetime = timezone.make_aware(datetime.combine(end_date + timezone.timedelta(days=1), time.min), current_tz)
+
+    return start_date, end_date, start_datetime, end_datetime
+
+
+def _percent(value, maximum):
+    if not maximum:
+        return 0
+    try:
+        return min(100, max(0, int((Decimal(value) / Decimal(maximum)) * Decimal("100"))))
+    except Exception:
+        return 0
+
+
+def _analytics_export_response(filename, rows):
+    response = HttpResponse(content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response.write("\ufeff")
+
+    writer = csv.writer(response, delimiter=";")
+    for row in rows:
+        writer.writerow(row)
+
+    return response
+
+
+def _build_analytics_context(request):
+    start_date, end_date, start_datetime, end_datetime = _analytics_period_from_request(request)
+
+    all_orders = Order.objects.filter(
+        created_at__gte=start_datetime,
+        created_at__lt=end_datetime,
+    )
+    sales_orders = all_orders.filter(payment_status="paid").exclude(status__in=["cancelled", "returned"])
+    returns = ReturnRequest.objects.filter(
+        created_at__gte=start_datetime,
+        created_at__lt=end_datetime,
+    )
+
+    gross_revenue = sales_orders.aggregate(total=_money_sum("total_amount"))["total"] or _decimal_zero()
+    completed_refunds = returns.filter(status="completed").aggregate(total=_money_sum("refund_amount"))["total"] or _decimal_zero()
+    net_revenue = max(gross_revenue - completed_refunds, _decimal_zero())
+    orders_count = sales_orders.count()
+    all_orders_count = all_orders.count()
+    average_order = (gross_revenue / orders_count).quantize(Decimal("0.01")) if orders_count else _decimal_zero()
+
+    sold_items_count = OrderItem.objects.filter(order__in=sales_orders).aggregate(
+        total=Coalesce(Sum("quantity"), Value(0), output_field=IntegerField())
+    )["total"] or 0
+
+    sales_by_day_queryset = (
+        sales_orders
+        .annotate(day=TruncDate("created_at"))
+        .values("day")
+        .annotate(
+            orders_count=Count("id"),
+            revenue=_money_sum("total_amount"),
+        )
+        .order_by("day")
+    )
+    sales_by_day = list(sales_by_day_queryset)
+    max_daily_revenue = max([row["revenue"] for row in sales_by_day], default=_decimal_zero())
+    for row in sales_by_day:
+        row["bar_percent"] = _percent(row["revenue"], max_daily_revenue)
+
+    top_products_queryset = (
+        OrderItem.objects
+        .filter(order__in=sales_orders)
+        .values(
+            "product_variant__product__name",
+            "product_variant__product__article",
+            "product_variant__product__brand__name",
+            "product_variant__product__category__name",
+        )
+        .annotate(
+            units=Coalesce(Sum("quantity"), Value(0), output_field=IntegerField()),
+            revenue=_money_sum("subtotal"),
+        )
+        .order_by("-units", "-revenue")[:10]
+    )
+    top_products = list(top_products_queryset)
+    max_product_units = max([row["units"] for row in top_products], default=0)
+    for row in top_products:
+        row["bar_percent"] = _percent(row["units"], max_product_units)
+
+    return_labels = dict(ReturnRequest.STATUS_CHOICES)
+    returns_by_status = []
+    for row in returns.values("status").annotate(count=Count("id"), amount=_money_sum("refund_amount")).order_by("status"):
+        row["label"] = return_labels.get(row["status"], row["status"])
+        returns_by_status.append(row)
+
+    variants = list(
+        ProductVariant.objects
+        .select_related("product", "product__brand", "product__category", "color")
+        .order_by("product__name", "color__name", "size")
+    )
+    attach_available_quantities(variants)
+    low_stock_variants = sorted(
+        [variant for variant in variants if 0 < getattr(variant, "available_quantity", variant.quantity) <= 3],
+        key=lambda item: (getattr(item, "available_quantity", item.quantity), item.product.name, item.size),
+    )[:15]
+    out_of_stock_variants = [variant for variant in variants if getattr(variant, "available_quantity", variant.quantity) <= 0]
+    total_units_on_stock = sum((variant.quantity or 0) for variant in variants)
+    total_available_units = sum(getattr(variant, "available_quantity", variant.quantity or 0) for variant in variants)
+    active_reserved_units = max(total_units_on_stock - total_available_units, 0)
+
+    query_string = urlencode({
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+    })
+
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "start_date_value": start_date.isoformat(),
+        "end_date_value": end_date.isoformat(),
+        "query_string": query_string,
+        "all_orders_count": all_orders_count,
+        "orders_count": orders_count,
+        "gross_revenue": gross_revenue,
+        "completed_refunds": completed_refunds,
+        "net_revenue": net_revenue,
+        "average_order": average_order,
+        "sold_items_count": sold_items_count,
+        "returns_count": returns.count(),
+        "returns_requested_count": returns.filter(status="requested").count(),
+        "returns_completed_count": returns.filter(status="completed").count(),
+        "sales_by_day": sales_by_day,
+        "top_products": top_products,
+        "returns_by_status": returns_by_status,
+        "variants_total": len(variants),
+        "total_units_on_stock": total_units_on_stock,
+        "total_available_units": total_available_units,
+        "active_reserved_units": active_reserved_units,
+        "low_stock_count": len(low_stock_variants),
+        "out_of_stock_count": len(out_of_stock_variants),
+        "low_stock_variants": low_stock_variants,
+        "out_of_stock_variants": out_of_stock_variants[:15],
+    }
 
 
 class EmailPasswordChangeView(LoginRequiredMixin, PasswordChangeView):
@@ -123,7 +312,7 @@ def _order_base_queryset():
     return (
         Order.objects
         .select_related("customer", "promo_code")
-        .prefetch_related(Prefetch("items", queryset=order_items_queryset))
+        .prefetch_related(Prefetch("items", queryset=order_items_queryset), "reservations")
     )
 
 
@@ -199,6 +388,17 @@ def _parse_refund_amount(raw_value, fallback):
         raise ValueError("Сумма возврата не может быть отрицательной.")
 
     return value
+
+
+def _sync_order_reservations_after_manual_update(order):
+    if order.payment_status == "paid" or order.status in {"paid", "processing", "assembled", "shipped", "delivered"}:
+        try:
+            confirm_order_reservations(order)
+        except ReservationError as error:
+            raise ValueError(str(error))
+
+    if order.payment_status == "failed" or order.status == "cancelled":
+        release_order_reservations(order, reason="manual_update")
 
 
 def _complete_return_request(return_request, refund_amount):
@@ -311,6 +511,7 @@ def email_confirm_view(request, uidb64, token):
             )
 
         login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+        merge_session_cart_to_db(request, user=user)
         messages.success(request, "Email подтверждён. Аккаунт активирован.")
         return redirect("users:profile")
 
@@ -327,6 +528,7 @@ def login_view(request):
         if form.is_valid():
             user = form.get_user()
             login(request, user)
+            merge_session_cart_to_db(request, user=user)
             if getattr(user, "can_manage_shop", False):
                 return redirect("users:staff_dashboard")
             return redirect("home")
@@ -340,6 +542,7 @@ def login_view(request):
 
 @login_required
 def profile_view(request):
+    release_expired_reservations()
     if getattr(request.user, "can_manage_shop", False):
         return redirect("users:staff_dashboard")
 
@@ -374,7 +577,7 @@ def profile_view(request):
         Order.objects
         .filter(customer=request.user)
         .select_related("promo_code")
-        .prefetch_related(Prefetch("items", queryset=order_items_queryset))
+        .prefetch_related(Prefetch("items", queryset=order_items_queryset), "reservations")
         .order_by("-created_at")
     )
 
@@ -387,6 +590,7 @@ def profile_view(request):
 
 @manager_required
 def staff_dashboard(request):
+    release_expired_reservations()
     recent_orders = (
         Order.objects
         .select_related("customer", "promo_code")
@@ -428,8 +632,68 @@ def staff_dashboard(request):
     return render(request, "registration/staff_dashboard.html", context)
 
 
+
+@manager_required
+def staff_analytics(request):
+    release_expired_reservations()
+    context = _build_analytics_context(request)
+    return render(request, "registration/staff_analytics.html", context)
+
+
+@manager_required
+def staff_analytics_export(request):
+    release_expired_reservations()
+    context = _build_analytics_context(request)
+    report = request.GET.get("report", "sales")
+    period = f'{context["start_date_value"]}_{context["end_date_value"]}'
+
+    if report == "products":
+        rows = [["Товар", "Артикул", "Бренд", "Категория", "Продано, шт.", "Выручка по товарам"]]
+        for item in context["top_products"]:
+            rows.append([
+                item["product_variant__product__name"],
+                item["product_variant__product__article"],
+                item["product_variant__product__brand__name"],
+                item["product_variant__product__category__name"],
+                item["units"],
+                item["revenue"],
+            ])
+        return _analytics_export_response(f"analytics_products_{period}.csv", rows)
+
+    if report == "returns":
+        rows = [["Статус возврата", "Количество заявок", "Сумма возврата"]]
+        for item in context["returns_by_status"]:
+            rows.append([item["label"], item["count"], item["amount"]])
+        return _analytics_export_response(f"analytics_returns_{period}.csv", rows)
+
+    if report == "stock":
+        rows = [["Товар", "Артикул", "Цвет", "Размер", "На складе", "Доступно", "Зарезервировано", "Цена"]]
+        variants = list(context["low_stock_variants"]) + list(context["out_of_stock_variants"])
+        for variant in variants:
+            rows.append([
+                variant.product.name,
+                variant.product.article,
+                variant.color.name,
+                variant.size,
+                variant.quantity,
+                getattr(variant, "available_quantity", variant.quantity),
+                getattr(variant, "reserved_quantity", 0),
+                variant.final_price,
+            ])
+        return _analytics_export_response(f"analytics_stock_{period}.csv", rows)
+
+    rows = [["Дата", "Заказов", "Выручка"]]
+    for item in context["sales_by_day"]:
+        rows.append([
+            item["day"].strftime("%d.%m.%Y") if item["day"] else "",
+            item["orders_count"],
+            item["revenue"],
+        ])
+    return _analytics_export_response(f"analytics_sales_{period}.csv", rows)
+
 @manager_required
 def staff_orders(request):
+    release_expired_reservations()
     valid_statuses = _choice_values(Order.STATUS_CHOICES)
     valid_payment_statuses = _choice_values(Order.PAYMENT_STATUS_CHOICES)
 
@@ -451,6 +715,11 @@ def staff_orders(request):
             order.status = new_status
             order.payment_status = new_payment_status
             order.tracking_number = tracking_number or None
+            try:
+                _sync_order_reservations_after_manual_update(order)
+            except ValueError as error:
+                messages.error(request, f"Не удалось обновить резерв: {error}")
+                return redirect(_safe_next_or_default(request, reverse("users:staff_orders")))
             order.save(update_fields=["status", "payment_status", "tracking_number", "updated_at"])
             notify_order_status_changed(
                 order,
@@ -499,6 +768,7 @@ def staff_orders(request):
 
 @manager_required
 def staff_order_detail(request, order_id):
+    release_expired_reservations()
     order = get_object_or_404(_order_base_queryset(), pk=order_id)
     valid_statuses = _choice_values(Order.STATUS_CHOICES)
     valid_payment_statuses = _choice_values(Order.PAYMENT_STATUS_CHOICES)
@@ -520,6 +790,11 @@ def staff_order_detail(request, order_id):
             order.status = new_status
             order.payment_status = new_payment_status
             order.tracking_number = tracking_number or None
+            try:
+                _sync_order_reservations_after_manual_update(order)
+            except ValueError as error:
+                messages.error(request, f"Не удалось обновить резерв: {error}")
+                return redirect("users:staff_order_detail", order_id=order.id)
             order.save(update_fields=["status", "payment_status", "tracking_number", "updated_at"])
             notify_order_status_changed(
                 order,

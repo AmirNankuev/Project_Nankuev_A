@@ -1,9 +1,10 @@
 from decimal import Decimal, ROUND_HALF_UP
 
 from autoslug import AutoSlugField
-from django.core.validators import MinValueValidator, RegexValidator
+from django.conf import settings
+from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
-from django.db.models import Q
+from django.db.models import Avg, Q
 
 from .utils import cyrillic_slugify
 
@@ -74,6 +75,79 @@ class Category(models.Model):
         return self.name
 
 
+class Collection(models.Model):
+    name = models.CharField(
+        "Название коллекции",
+        max_length=120,
+        unique=True,
+    )
+    slug = AutoSlugField(
+        "URL-адрес",
+        populate_from="name",
+        slugify=cyrillic_slugify,
+        unique=True,
+        max_length=180,
+    )
+    season = models.CharField(
+        "Сезон",
+        max_length=50,
+        blank=True,
+        help_text="Например: Весна-лето, Осень-зима.",
+    )
+    year = models.PositiveSmallIntegerField(
+        "Год",
+        blank=True,
+        null=True,
+        help_text="Год выпуска коллекции.",
+    )
+    description = models.TextField(
+        "Описание коллекции",
+        blank=True,
+    )
+    is_active = models.BooleanField(
+        "Показывать на сайте",
+        default=True,
+        db_index=True,
+    )
+    sort_order = models.PositiveIntegerField(
+        "Порядок показа",
+        default=0,
+    )
+    created_at = models.DateTimeField(
+        "Дата создания",
+        auto_now_add=True,
+    )
+    updated_at = models.DateTimeField(
+        "Дата обновления",
+        auto_now=True,
+    )
+
+    class Meta:
+        verbose_name = "Коллекция"
+        verbose_name_plural = "Коллекции"
+        ordering = ["sort_order", "-year", "name"]
+        indexes = [
+            models.Index(fields=["slug"]),
+            models.Index(fields=["is_active", "sort_order"]),
+        ]
+
+    @property
+    def display_period(self):
+        if self.season and self.year:
+            return f"{self.season} {self.year}"
+        if self.season:
+            return self.season
+        if self.year:
+            return str(self.year)
+        return ""
+
+    def __str__(self):
+        period = self.display_period
+        if period:
+            return f"{self.name} — {period}"
+        return self.name
+
+
 class Color(models.Model):
     name = models.CharField(
         "Название цвета",
@@ -135,6 +209,13 @@ class Product(models.Model):
         on_delete=models.PROTECT,
         related_name="products",
     )
+    collections = models.ManyToManyField(
+        Collection,
+        verbose_name="Коллекции",
+        related_name="products",
+        blank=True,
+        help_text="Коллекции, к которым относится товар (например, сезонные или акционные подборки).",
+    )
     price = models.DecimalField(
         "Базовая цена (закупка)",
         max_digits=10,
@@ -192,6 +273,33 @@ class Product(models.Model):
             return "Цена по запросу"
 
         return f"от {self.price_from} ₽"
+
+    @property
+    def reviews_count(self):
+        annotated_count = getattr(self, "published_reviews_count", None)
+        if annotated_count is not None:
+            return annotated_count
+
+        return self.reviews.filter(status=ProductReview.Status.PUBLISHED).count()
+
+    @property
+    def average_rating(self):
+        annotated_rating = getattr(self, "published_average_rating", None)
+        if annotated_rating is not None:
+            return annotated_rating or 0
+
+        return self.reviews.filter(
+            status=ProductReview.Status.PUBLISHED
+        ).aggregate(value=Avg("rating"))["value"] or 0
+
+    @property
+    def average_rating_label(self):
+        rating = self.average_rating
+        if not rating:
+            return "Нет оценок"
+
+        rating_value = Decimal(str(rating)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+        return f"{rating_value} из 5"
 
     def __str__(self):
         return f"{self.name} ({self.article})"
@@ -332,3 +440,97 @@ class ProductImage(models.Model):
 
     def __str__(self):
         return f"Изображение товара: {self.product.name}"
+
+class ProductReview(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "На модерации"
+        PUBLISHED = "published", "Опубликован"
+        REJECTED = "rejected", "Отклонён"
+
+    RATING_CHOICES = [
+        (5, "5 — отлично"),
+        (4, "4 — хорошо"),
+        (3, "3 — нормально"),
+        (2, "2 — плохо"),
+        (1, "1 — очень плохо"),
+    ]
+
+    product = models.ForeignKey(
+        Product,
+        verbose_name="Товар",
+        on_delete=models.CASCADE,
+        related_name="reviews",
+    )
+    customer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Покупатель",
+        on_delete=models.CASCADE,
+        related_name="product_reviews",
+    )
+    order_item = models.ForeignKey(
+        "main.OrderItem",
+        verbose_name="Позиция заказа",
+        on_delete=models.SET_NULL,
+        related_name="product_reviews",
+        blank=True,
+        null=True,
+        help_text="Позиция оплаченного заказа, подтверждающая покупку товара.",
+    )
+    rating = models.PositiveSmallIntegerField(
+        "Оценка",
+        choices=RATING_CHOICES,
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+    )
+    text = models.TextField(
+        "Текст отзыва",
+        max_length=2000,
+        help_text="Кратко опишите впечатление от товара, качества, размера или доставки.",
+    )
+    status = models.CharField(
+        "Статус",
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PUBLISHED,
+        db_index=True,
+    )
+    created_at = models.DateTimeField(
+        "Дата создания",
+        auto_now_add=True,
+    )
+    updated_at = models.DateTimeField(
+        "Дата обновления",
+        auto_now=True,
+    )
+
+    class Meta:
+        verbose_name = "Отзыв о товаре"
+        verbose_name_plural = "Отзывы о товарах"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["product", "customer"],
+                name="unique_product_review_per_customer",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["product", "status"]),
+            models.Index(fields=["customer", "created_at"]),
+            models.Index(fields=["rating"]),
+        ]
+
+    @property
+    def is_published(self):
+        return self.status == self.Status.PUBLISHED
+
+    @property
+    def rating_label(self):
+        return f"{self.rating} из 5"
+
+    @property
+    def author_name(self):
+        full_name = getattr(self.customer, "full_name", "") or self.customer.get_full_name()
+        return full_name or self.customer.username
+
+    def __str__(self):
+        return f"{self.product.name}: {self.rating} из 5 — {self.customer}"
+

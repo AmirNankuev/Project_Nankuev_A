@@ -40,6 +40,10 @@
                 {% else %}
                     Оплата: {{ created_order.get_payment_status_display }}.
                 {% endif %}<br>
+                {% if created_order.active_reservation_deadline_label %}
+                    Товар зарезервирован до {{ created_order.active_reservation_deadline_label }}.
+                    Если заказ не будет оплачен до этого времени, резерв освободится автоматически.<br>
+                {% endif %}
                 Заказ доступен в админке в разделе «Main → Заказы».
             </div>
 

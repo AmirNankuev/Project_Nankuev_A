@@ -195,6 +195,12 @@ class ShopSettings(models.Model):
         validators=[MinValueValidator(1), MaxValueValidator(365)],
         help_text="Количество дней после оформления заказа, в течение которых покупатель может создать заявку на возврат.",
     )
+    reservation_hold_minutes = models.PositiveIntegerField(
+        "Время резервирования товара, минут",
+        default=30,
+        validators=[MinValueValidator(1), MaxValueValidator(1440)],
+        help_text="Сколько минут товар удерживается за покупателем, пока он завершает онлайн-оплату.",
+    )
     free_delivery_from = models.DecimalField(
         "Бесплатная доставка от суммы",
         max_digits=10,
@@ -486,6 +492,25 @@ class Order(models.Model):
     def return_deadline_label(self):
         return timezone.localtime(self.return_deadline).strftime("%d.%m.%Y %H:%M")
 
+    @property
+    def active_reservation_deadline(self):
+        active_reservations = self.reservations.filter(status=StockReservation.Status.ACTIVE)
+        deadlines = [reservation.expires_at for reservation in active_reservations if reservation.expires_at]
+        if not deadlines:
+            return None
+        return min(deadlines)
+
+    @property
+    def active_reservation_deadline_label(self):
+        deadline = self.active_reservation_deadline
+        if not deadline:
+            return ""
+        return timezone.localtime(deadline).strftime("%d.%m.%Y %H:%M")
+
+    @property
+    def has_active_reservations(self):
+        return self.reservations.filter(status=StockReservation.Status.ACTIVE).exists()
+
     def recalculate_total(self):
         items_total = sum(item.subtotal for item in self.items.all())
         discount = self.discount_amount or Decimal("0.00")
@@ -572,6 +597,106 @@ class OrderItem(models.Model):
 
     def __str__(self):
         return f"{self.product_variant} × {self.quantity}"
+
+
+class StockReservation(models.Model):
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Зарезервирован"
+        CONFIRMED = "confirmed", "Подтверждён"
+        RELEASED = "released", "Освобождён"
+
+    order = models.ForeignKey(
+        Order,
+        verbose_name="Заказ",
+        on_delete=models.CASCADE,
+        related_name="reservations",
+    )
+    order_item = models.OneToOneField(
+        OrderItem,
+        verbose_name="Позиция заказа",
+        on_delete=models.CASCADE,
+        related_name="reservation",
+    )
+    customer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Покупатель",
+        on_delete=models.PROTECT,
+        related_name="stock_reservations",
+    )
+    product_variant = models.ForeignKey(
+        "catalog.ProductVariant",
+        verbose_name="Вариант товара",
+        on_delete=models.PROTECT,
+        related_name="reservations",
+    )
+    quantity = models.PositiveIntegerField(
+        "Количество",
+        validators=[MinValueValidator(1)],
+    )
+    status = models.CharField(
+        "Статус резерва",
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+        db_index=True,
+    )
+    expires_at = models.DateTimeField(
+        "Действует до",
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Для онлайн-оплаты: время, после которого резерв автоматически освобождается.",
+    )
+    confirmed_at = models.DateTimeField(
+        "Подтверждён",
+        blank=True,
+        null=True,
+    )
+    released_at = models.DateTimeField(
+        "Освобождён",
+        blank=True,
+        null=True,
+    )
+    release_reason = models.CharField(
+        "Причина освобождения",
+        max_length=100,
+        blank=True,
+    )
+    created_at = models.DateTimeField(
+        "Дата создания",
+        auto_now_add=True,
+    )
+    updated_at = models.DateTimeField(
+        "Дата обновления",
+        auto_now=True,
+    )
+
+    class Meta:
+        verbose_name = "Резерв товара"
+        verbose_name_plural = "Резервы товаров"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status", "expires_at"]),
+            models.Index(fields=["product_variant", "status"]),
+            models.Index(fields=["order", "status"]),
+        ]
+
+    @property
+    def is_active(self):
+        return self.status == self.Status.ACTIVE
+
+    @property
+    def is_expired(self):
+        return bool(self.expires_at and timezone.now() >= self.expires_at)
+
+    @property
+    def deadline_label(self):
+        if not self.expires_at:
+            return ""
+        return timezone.localtime(self.expires_at).strftime("%d.%m.%Y %H:%M")
+
+    def __str__(self):
+        return f"Резерв {self.product_variant} × {self.quantity} для {self.order.order_number}"
 
 
 class ReturnRequest(models.Model):
